@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import Lottie from "lottie-react";
+import beeLoungingAnimation from "./Animation/Bee - lounging.json";
 import "./App.css";
 
 const API_BASE_URL = (
@@ -317,9 +319,7 @@ function App() {
           )}
           {status === "loading" && (
             <div className="loading-wrap" role="status" aria-live="polite" aria-label="Loading">
-              <span className="loading-dot" />
-              <span className="loading-dot" />
-              <span className="loading-dot" />
+              <Lottie className="loading-lottie" animationData={beeLoungingAnimation} loop />
             </div>
           )}
           {status === "success" && (
