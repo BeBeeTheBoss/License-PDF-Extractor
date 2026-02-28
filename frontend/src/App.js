@@ -16,6 +16,7 @@ const toBackendUrl = (url) => {
 };
 
 function App() {
+  const [operationMode, setOperationMode] = useState("insert");
   const [documentType, setDocumentType] = useState("");
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -29,7 +30,8 @@ function App() {
   const [submitError, setSubmitError] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const fileInputRef = useRef(null);
+  const insertFileInputRef = useRef(null);
+  const updateFileInputRef = useRef(null);
 
   useEffect(() => {
     if (!loading) {
@@ -49,6 +51,28 @@ function App() {
 
     return () => clearInterval(timer);
   }, [loading]);
+
+  useEffect(() => {
+    setDocumentType("");
+    setFile(null);
+    setIsDragging(false);
+    setSpreadsheetId("");
+    setStatus("idle");
+    setSheetsMessage("");
+    setSheetsUrl("");
+    setDownloadMessage("");
+    setDownloadUrl("");
+    setFieldErrors({ documentType: "", file: "" });
+    setSubmitError("");
+    setLoading(false);
+    setProgress(0);
+    if (insertFileInputRef.current) {
+      insertFileInputRef.current.value = "";
+    }
+    if (updateFileInputRef.current) {
+      updateFileInputRef.current.value = "";
+    }
+  }, [operationMode]);
 
   const setFieldError = (field, message) => {
     setFieldErrors((prev) => ({ ...prev, [field]: message }));
@@ -82,15 +106,16 @@ function App() {
     handleFileChange(droppedFile);
   };
 
-  const openFilePicker = () => {
+  const openFilePicker = (mode = operationMode) => {
     if (!documentType) {
       setFieldError("documentType", "Please choose document type.");
       return;
     }
-    fileInputRef.current?.click();
+    const targetRef = mode === "update" ? updateFileInputRef : insertFileInputRef;
+    targetRef.current?.click();
   };
 
-  const handleUpload = async () => {
+  const handleUpload = async (mode = operationMode) => {
     let hasError = false;
 
     if (!documentType) {
@@ -113,6 +138,7 @@ function App() {
 
     const formData = new FormData();
     formData.append("document_type", documentType);
+    formData.append("operation_mode", mode);
     formData.append("pdf", file);
     if (spreadsheetId.trim()) {
       formData.append("spreadsheet_id", spreadsheetId.trim());
@@ -175,16 +201,17 @@ function App() {
     }
   };
 
-  return (
-    <main className="app-shell">
-      <div className="bg-blob blob-a" aria-hidden="true" />
-      <div className="bg-blob blob-b" aria-hidden="true" />
+  const renderCardFace = (mode, inputRef) => {
+    const isUpdate = mode === "update";
 
-      <section className="glass-card">
+    return (
+      <>
         <span className="eyebrow">PDF Extractor</span>
         <h1>Document Parser</h1>
         <p className="subtitle">
-          Upload a PDF and extract clean text output from the backend pipeline. The response below updates instantly after processing.
+          {isUpdate
+            ? "Upload a PDF to update the current sheet content with fresh extracted data."
+            : "Upload a PDF to insert a new result block into your sheet."}
         </p>
 
         <div className="doc-type-wrap">
@@ -193,7 +220,7 @@ function App() {
             <label className={`doc-type-option ${documentType === "OIL" ? "active" : ""}`}>
               <input
                 type="radio"
-                name="documentType"
+                name={`documentType-${mode}`}
                 value="OIL"
                 checked={documentType === "OIL"}
                 onChange={(e) => {
@@ -207,7 +234,7 @@ function App() {
             <label className={`doc-type-option ${documentType === "YGN" ? "active" : ""}`}>
               <input
                 type="radio"
-                name="documentType"
+                name={`documentType-${mode}`}
                 value="YGN"
                 checked={documentType === "YGN"}
                 onChange={(e) => {
@@ -235,18 +262,18 @@ function App() {
             }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDrop}
-            onClick={openFilePicker}
+            onClick={() => openFilePicker(mode)}
             role="button"
             tabIndex={0}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                openFilePicker();
+                openFilePicker(mode);
               }
             }}
           >
             <input
-              ref={fileInputRef}
+              ref={inputRef}
               type="file"
               accept="application/pdf"
               disabled={!documentType}
@@ -259,29 +286,19 @@ function App() {
               </p>
             </div>
           </div>
-          <button className="upload-btn" onClick={handleUpload} disabled={loading}>
-            {loading ? "Processing..." : "Upload & Extract"}
+          <button className="upload-btn" onClick={() => handleUpload(mode)} disabled={loading}>
+            {loading ? (isUpdate ? "Updating..." : "Inserting...") : isUpdate ? "Update Sheet" : "Insert Data"}
           </button>
         </div>
         {fieldErrors.file && <p className="input-error">{fieldErrors.file}</p>}
         {submitError && <p className="input-error">{submitError}</p>}
-
-        {/* <div className="sheet-input-wrap">
-          <input
-            className="sheet-input"
-            type="text"
-            placeholder="Optional: Google Spreadsheet ID (override .env)"
-            value={spreadsheetId}
-            onChange={(e) => setSpreadsheetId(e.target.value)}
-          />
-        </div> */}
 
         <p className="file-name">{file ? `Selected: ${file.name}` : "No file selected."}</p>
 
         {loading && (
           <div className="progress-wrap" aria-live="polite" aria-label="Upload progress">
             <div className="progress-head">
-              <span>Processing</span>
+              <span>{isUpdate ? "Updating" : "Inserting"}</span>
               <span>{progress}%</span>
             </div>
             <div className="progress-track">
@@ -291,7 +308,13 @@ function App() {
         )}
 
         <section className="status-card">
-          {status === "idle" && <p className="status-hint">Upload a PDF to start extraction.</p>}
+          {status === "idle" && (
+            <p className="status-hint">
+              {isUpdate
+                ? "Choose a PDF to update current sheet data."
+                : "Choose a PDF to insert new sheet data."}
+            </p>
+          )}
           {status === "loading" && (
             <div className="loading-wrap" role="status" aria-live="polite" aria-label="Loading">
               <span className="loading-dot" />
@@ -303,13 +326,11 @@ function App() {
             <div className="success-wrap" role="status" aria-live="polite">
               <span className="success-check" aria-hidden="true" />
               <p className="success-text">Extraction complete</p>
-              {/* {sheetsMessage && <p className="sheet-note">{sheetsMessage}</p>} */}
               {sheetsUrl && (
                 <a className="sheet-link" href={sheetsUrl} target="_blank" rel="noreferrer">
                   Open Google Sheet
                 </a>
               )}
-              {/* {downloadMessage && <p className="sheet-note">{downloadMessage}</p>} */}
               {downloadUrl && (
                 <a className="sheet-link" href={downloadUrl}>
                   Download Sheet File
@@ -318,7 +339,39 @@ function App() {
             </div>
           )}
         </section>
-      </section>
+      </>
+    );
+  };
+
+  return (
+    <main className="app-shell">
+      <div className="bg-blob blob-a" aria-hidden="true" />
+      <div className="bg-blob blob-b" aria-hidden="true" />
+
+      <div className="card-stack">
+        <div className="mode-toggle" role="group" aria-label="Operation mode">
+          <button
+            type="button"
+            className={`mode-btn ${operationMode === "insert" ? "active" : ""}`}
+            onClick={() => setOperationMode("insert")}
+          >
+            Insert
+          </button>
+          <button
+            type="button"
+            className={`mode-btn ${operationMode === "update" ? "active" : ""}`}
+            onClick={() => setOperationMode("update")}
+          >
+            Update
+          </button>
+        </div>
+        <div className="card-flip">
+          <div className={`card-flip-inner ${operationMode === "update" ? "is-flipped" : ""}`}>
+            <section className="glass-card card-face card-front">{renderCardFace("insert", insertFileInputRef)}</section>
+            <section className="glass-card card-face card-back">{renderCardFace("update", updateFileInputRef)}</section>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }

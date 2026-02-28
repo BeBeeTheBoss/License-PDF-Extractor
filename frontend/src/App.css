@@ -99,10 +99,45 @@ body {
   }
 }
 
+.card-stack {
+  position: relative;
+  width: min(940px, 100%);
+}
+
+.card-flip {
+  width: 100%;
+  margin-top: 40px;
+  perspective: 1400px;
+  transform-origin: center;
+}
+
+.card-flip-inner {
+  position: relative;
+  width: 100%;
+  display: grid;
+  transform-style: preserve-3d;
+  transition: transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.card-flip-inner.is-flipped {
+  transform: rotateY(180deg);
+}
+
+.card-face {
+  grid-area: 1 / 1;
+  width: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.card-back {
+  transform: rotateY(180deg);
+}
+
 .glass-card {
   position: relative;
   z-index: 1;
-  width: min(940px, 100%);
+  width: 100%;
   border-radius: 28px;
   padding: 34px;
   background: var(--glass-bg);
@@ -112,6 +147,42 @@ body {
   -webkit-backdrop-filter: blur(20px) saturate(155%);
   animation: cardIn 500ms ease;
   overflow: hidden;
+  transition: border-color 260ms ease, box-shadow 260ms ease, background-color 260ms ease;
+}
+
+.mode-toggle {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+}
+
+.mode-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.mode-btn:hover {
+  transform: translateY(-1px);
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(34, 211, 238, 0.22));
+  color: #075985;
 }
 
 @keyframes cardIn {
@@ -514,6 +585,10 @@ h1 {
   .glass-card {
     padding: 24px;
     border-radius: 22px;
+  }
+
+  .mode-toggle {
+    top: -18px;
   }
 
   .controls {
