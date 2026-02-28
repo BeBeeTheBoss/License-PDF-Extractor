@@ -17,7 +17,27 @@ const toBackendUrl = (url) => {
   return `${API_BASE_URL}${url.startsWith("/") ? "" : "/"}${url}`;
 };
 
+const AUTH_TOKEN_KEY = "pdf_extractor_admin_token";
+
+const withTokenInUrl = (url, token) => {
+  if (!url || !token) {
+    return toBackendUrl(url || "");
+  }
+  const absolute = toBackendUrl(url);
+  const target = new URL(absolute);
+  target.searchParams.set("token", token);
+  return target.toString();
+};
+
 function App() {
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_KEY) || "");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authEmail, setAuthEmail] = useState("");
+  const [loginEmail, setLoginEmail] = useState("admin@gmail.com");
+  const [loginPassword, setLoginPassword] = useState("123456");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
   const [operationMode, setOperationMode] = useState("insert");
   const [documentType, setDocumentType] = useState("");
   const [file, setFile] = useState(null);
@@ -34,6 +54,62 @@ function App() {
   const [progress, setProgress] = useState(0);
   const insertFileInputRef = useRef(null);
   const updateFileInputRef = useRef(null);
+
+  useEffect(() => {
+    const verifyAuth = async () => {
+      if (!authToken) {
+        setIsAuthenticated(false);
+        setAuthChecking(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+        });
+        if (!response.ok) {
+          throw new Error("Unauthorized");
+        }
+        const payload = await response.json();
+        setAuthEmail(payload?.email || "");
+        setIsAuthenticated(true);
+      } catch (_err) {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        setAuthToken("");
+        setIsAuthenticated(false);
+        setAuthEmail("");
+      } finally {
+        setAuthChecking(false);
+      }
+    };
+
+    verifyAuth();
+  }, [authToken]);
+
+  const resetUiState = () => {
+    setDocumentType("");
+    setFile(null);
+    setIsDragging(false);
+    setSpreadsheetId("");
+    setStatus("idle");
+    setSheetsMessage("");
+    setSheetsUrl("");
+    setDownloadMessage("");
+    setDownloadUrl("");
+    setFieldErrors({ documentType: "", file: "" });
+    setSubmitError("");
+    setLoading(false);
+    setProgress(0);
+    if (insertFileInputRef.current) {
+      insertFileInputRef.current.value = "";
+    }
+    if (updateFileInputRef.current) {
+      updateFileInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     if (!loading) {
@@ -55,25 +131,7 @@ function App() {
   }, [loading]);
 
   useEffect(() => {
-    setDocumentType("");
-    setFile(null);
-    setIsDragging(false);
-    setSpreadsheetId("");
-    setStatus("idle");
-    setSheetsMessage("");
-    setSheetsUrl("");
-    setDownloadMessage("");
-    setDownloadUrl("");
-    setFieldErrors({ documentType: "", file: "" });
-    setSubmitError("");
-    setLoading(false);
-    setProgress(0);
-    if (insertFileInputRef.current) {
-      insertFileInputRef.current.value = "";
-    }
-    if (updateFileInputRef.current) {
-      updateFileInputRef.current.value = "";
-    }
+    resetUiState();
   }, [operationMode]);
 
   const setFieldError = (field, message) => {
@@ -160,6 +218,7 @@ function App() {
         method: "POST",
         headers: {
           Accept: "application/json",
+          Authorization: `Bearer ${authToken}`,
         },
         body: formData,
       });
@@ -189,10 +248,16 @@ function App() {
       setSheetsUrl(sheetInfo.spreadsheet_url || "");
       const downloadInfo = payload?.downloadable_sheet || {};
       setDownloadMessage(downloadInfo.message || "");
-      setDownloadUrl(toBackendUrl(downloadInfo.download_url || ""));
+      setDownloadUrl(withTokenInUrl(downloadInfo.download_url || "", authToken));
       setProgress(100);
       setStatus("success");
     } catch (error) {
+      if ((error.message || "").toLowerCase().includes("unauthorized")) {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        setAuthToken("");
+        setIsAuthenticated(false);
+        setAuthEmail("");
+      }
       setStatus("idle");
       setSubmitError(error.message || "Upload failed.");
     } finally {
@@ -343,24 +408,148 @@ function App() {
     );
   };
 
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    setLoginError("");
+    setLoginLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: loginEmail.trim(),
+          password: loginPassword,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.token) {
+        throw new Error(payload?.message || "Login failed.");
+      }
+
+      localStorage.setItem(AUTH_TOKEN_KEY, payload.token);
+      setAuthToken(payload.token);
+      setAuthEmail(payload.email || loginEmail.trim());
+      setIsAuthenticated(true);
+      setLoginPassword("");
+    } catch (error) {
+      setLoginError(error.message || "Login failed.");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (authToken) {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+        });
+      }
+    } catch (_err) {
+      // Ignore network logout failures and clear local auth anyway.
+    } finally {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      setAuthToken("");
+      setIsAuthenticated(false);
+      setAuthEmail("");
+      resetUiState();
+    }
+  };
+
+  if (authChecking) {
+    return (
+      <main className="app-shell">
+        <div className="card-stack auth-center">
+          <section className="glass-card auth-card">
+            <p className="status-hint">Checking authentication...</p>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <main className="app-shell">
+        <div className="bg-blob blob-a" aria-hidden="true" />
+        <div className="bg-blob blob-b" aria-hidden="true" />
+        <div className="card-stack auth-center">
+          <div className="signin-bee" aria-hidden="true">
+            <Lottie className="signin-bee-lottie" animationData={beeLoungingAnimation} loop />
+          </div>
+          <section className="glass-card auth-card">
+            <span className="eyebrow">Admin Login</span>
+            <h1>Sign In</h1>
+            <p className="subtitle">Only admin account can access the extraction page.</p>
+            <form className="auth-form" onSubmit={handleLogin}>
+              <input
+                className="auth-input"
+                type="email"
+                placeholder="Email"
+                // value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                required
+              />
+              <input
+                className="auth-input"
+                type="password"
+                placeholder="Password"
+                // value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                required
+              />
+              {loginError && <p className="input-error">{loginError}</p>}
+              <button className="upload-btn auth-btn" type="submit" disabled={loginLoading}>
+                {loginLoading ? "Signing in..." : "Login"}
+              </button>
+            </form>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <div className="bg-blob blob-a" aria-hidden="true" />
       <div className="bg-blob blob-b" aria-hidden="true" />
 
       <div className="card-stack">
+        <div className="auth-meta">
+          <span className="auth-user">{authEmail}</span>
+          <button type="button" className="logout-btn" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
         <div className="mode-toggle" role="group" aria-label="Operation mode">
           <button
             type="button"
             className={`mode-btn ${operationMode === "insert" ? "active" : ""}`}
-            onClick={() => setOperationMode("insert")}
+            onClick={() => {
+              if (operationMode === "insert") return;
+              resetUiState();
+              setOperationMode("insert");
+            }}
           >
             Insert
           </button>
           <button
             type="button"
             className={`mode-btn ${operationMode === "update" ? "active" : ""}`}
-            onClick={() => setOperationMode("update")}
+            onClick={() => {
+              if (operationMode === "update") return;
+              resetUiState();
+              setOperationMode("update");
+            }}
           >
             Update
           </button>

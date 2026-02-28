@@ -104,6 +104,93 @@ body {
   width: min(940px, 100%);
 }
 
+.signin-bee {
+  position: absolute;
+  z-index: 2;
+  top: -54px;
+  right: 90px;
+  pointer-events: none;
+}
+
+.signin-bee-lottie {
+  width: 130px;
+  height: 130px;
+  filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.2));
+}
+
+.glass-card.auth-card {
+  width: min(660px, 92%);
+}
+
+.auth-center {
+  display: grid;
+  place-items: center;
+}
+
+.auth-form {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.auth-input {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(248, 250, 252, 0.78);
+  padding: 12px 14px;
+  font: inherit;
+  color: #0f172a;
+  outline: none;
+}
+
+.auth-input:focus {
+  border-color: rgba(14, 165, 233, 0.55);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+}
+
+.auth-btn {
+  margin-top: 6px;
+}
+
+.auth-meta {
+  position: absolute;
+  right: 0;
+  top: -64px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.auth-user {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.logout-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  background: rgba(248, 250, 252, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  cursor: pointer;
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.logout-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.95);
+}
+
 .card-flip {
   width: 100%;
   margin-top: 40px;
@@ -566,6 +653,20 @@ h1 {
 
   .mode-toggle {
     top: -18px;
+  }
+
+  .auth-meta {
+    top: -54px;
+  }
+
+  .signin-bee {
+    top: -38px;
+    right: -10px;
+  }
+
+  .signin-bee-lottie {
+    width: 104px;
+    height: 104px;
   }
 
   .controls {
