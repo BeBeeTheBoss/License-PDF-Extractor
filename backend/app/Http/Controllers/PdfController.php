@@ -15,10 +15,12 @@ class PdfController extends Controller
         $request->validate([
             'pdf' => 'required|mimes:pdf|max:10240',
             'document_type' => 'required|in:OIL,YGN',
+            'operation_mode' => 'nullable|in:insert,update',
             'spreadsheet_id' => 'nullable|string|regex:/^[a-zA-Z0-9-_]+$/',
         ]);
         $file = $request->file('pdf');
         $documentType = (string) $request->input('document_type');
+        $operationMode = (string) $request->input('operation_mode', 'insert');
 
         $path = $file->storeAs('pdfs', $file->getClientOriginalName());
 
@@ -41,15 +43,15 @@ class PdfController extends Controller
             $file->getClientOriginalName(),
             $path,
             $extractedText,
-            $request->input('spreadsheet_id')
+            $request->input('spreadsheet_id'),
+            $operationMode
         );
-        // CSV export disabled for better request performance.
-        // Re-enable by calling generateGoogleSheetsCsvExport(...) again if needed.
-        $exportResult = [
-            'status' => 'disabled',
-            'message' => 'Downloadable CSV export is disabled.',
-            'download_url' => null,
-        ];
+        $exportResult = $this->generateGoogleSheetsCsvExport(
+            $documentType,
+            $file->getClientOriginalName(),
+            $path,
+            $extractedText
+        );
 
         return response()->json([
             'message' => 'PDF processed',
@@ -78,7 +80,8 @@ class PdfController extends Controller
         string $fileName,
         string $storedPath,
         string $text,
-        ?string $overrideSpreadsheetId = null
+        ?string $overrideSpreadsheetId = null,
+        string $operationMode = 'insert'
     ): array
     {
         $typeSpecificSpreadsheetId = $documentType === 'OIL'
@@ -121,6 +124,25 @@ class PdfController extends Controller
                 }
             }
 
+            if ($operationMode === 'update' && $documentType === 'OIL') {
+                $usageUpdate = $this->extractOilUsageUpdateRows($text);
+                if ($usageUpdate['license_no'] !== '' && $usageUpdate['rows'] !== []) {
+                    $updatedCount = $this->applyOilUsageUpdateToGoogleSheet(
+                        $accessToken,
+                        $spreadsheetId,
+                        $sheetName,
+                        $usageUpdate['license_no'],
+                        $usageUpdate['rows']
+                    );
+
+                    return [
+                        'status' => 'success',
+                        'message' => "OIL sheet updated ({$updatedCount} matched row(s)).",
+                        'spreadsheet_url' => $spreadsheetUrl,
+                    ];
+                }
+            }
+
             if (in_array($documentType, ['OIL', 'YGN'], true)) {
                 $oilRows = $this->extractOilRows($text);
                 if ($oilRows === []) {
@@ -133,7 +155,7 @@ class PdfController extends Controller
 
                 $metadata = $this->extractDocumentMetadata($text);
                 $exchangeInfo = $this->fetchExchangeRatesToUsdRows();
-                $sheetRange = rawurlencode($sheetName.'!A:R');
+                $sheetAppendRange = rawurlencode($sheetName.'!A:R');
                 $values = [];
                 if ($exchangeInfo['rows'] !== []) {
                     $values[] = [
@@ -166,13 +188,13 @@ class PdfController extends Controller
                 $values[] = [
                     'No',
                     'Document No',
+                    'Licence',
                     'Importer (Name & Address)',
                     'Registration No/Valid Date',
                     'Consignor (Name & Address)',
                     'Last Date of Import',
                     'Mode of transport',
                     'Place/Port of discharge',
-                    'Licence',
                     'Country Whence Consigned',
                     'Country of Origin',
                     'Method of Import',
@@ -188,13 +210,13 @@ class PdfController extends Controller
                     $values[] = [
                         $row['no'],
                         $this->stripMyanmarText($metadata['document_no']),
+                        $this->stripMyanmarText($metadata['licence']),
                         $this->stripMyanmarText($metadata['importer']),
                         $this->stripMyanmarText($metadata['registration_valid_date']),
                         $this->stripMyanmarText($metadata['consignor']),
                         $this->stripMyanmarText($metadata['last_date_of_import']),
                         $this->stripMyanmarText($metadata['mode_of_transport']),
                         $this->stripMyanmarText($metadata['place_port_of_discharge']),
-                        $this->stripMyanmarText($metadata['licence']),
                         $this->stripMyanmarText($metadata['country_whence_consigned']),
                         $this->stripMyanmarText($metadata['country_of_origin']),
                         $this->stripMyanmarText($metadata['method_of_import']),
@@ -229,40 +251,41 @@ class PdfController extends Controller
                     $this->asSheetTextDecimal4($this->extractOilTotalValueUsd($text, $oilRows)),
                 ];
 
-                $response = Http::withToken($accessToken)->post(
-                    "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$sheetRange}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS",
-                    [
-                        'majorDimension' => 'ROWS',
-                        'values' => $values,
-                    ]
+                $response = $this->writeRowsToGoogleSheet(
+                    $accessToken,
+                    $spreadsheetId,
+                    $sheetName,
+                    $values,
+                    $operationMode,
+                    $sheetAppendRange
                 );
             } else {
-                $sheetRange = rawurlencode($sheetName.'!A:E');
+                $sheetAppendRange = rawurlencode($sheetName.'!A:E');
                 $textForSheet = mb_substr(trim($text), 0, 49000);
-
-                $response = Http::withToken($accessToken)->post(
-                    "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$sheetRange}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS",
-                    [
-                        'majorDimension' => 'ROWS',
-                        'values' => [[
-                            now()->toIso8601String(),
-                            $documentType,
-                            $fileName,
-                            $storedPath,
-                            $textForSheet,
-                        ]],
-                    ]
+                $response = $this->writeRowsToGoogleSheet(
+                    $accessToken,
+                    $spreadsheetId,
+                    $sheetName,
+                    [[
+                        now()->toIso8601String(),
+                        $documentType,
+                        $fileName,
+                        $storedPath,
+                        $textForSheet,
+                    ]],
+                    $operationMode,
+                    $sheetAppendRange
                 );
             }
 
             if (! $response->successful()) {
-                throw new \RuntimeException('Google Sheets append failed: '.$response->body());
+                throw new \RuntimeException('Google Sheets write failed: '.$response->body());
             }
 
             return [
                 'status' => 'success',
                 'message' => in_array($documentType, ['OIL', 'YGN'], true)
-                    ? "{$documentType} table saved to Google Sheets."
+                    ? "{$documentType} table ".($operationMode === 'update' ? 'updated in' : 'saved to').' Google Sheets.'
                     : 'Extracted text saved to Google Sheets.',
                 'spreadsheet_url' => $spreadsheetUrl,
             ];
@@ -307,6 +330,380 @@ class PdfController extends Controller
             'spreadsheet_url' => $spreadsheetUrl !== '' ? $spreadsheetUrl : "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/edit#gid=0",
             'sheet_name' => $createdSheetName,
         ];
+    }
+
+    private function extractOilUsageUpdateRows(string $text): array
+    {
+        $normalizedText = str_replace(["\r\n", "\r"], "\n", $text);
+        $lines = preg_split('/\n/u', $normalizedText) ?: [];
+
+        $licenseNo = '';
+        $rows = [];
+        $totalLines = count($lines);
+
+        for ($i = 0; $i < $totalLines; $i++) {
+            $line = trim($lines[$i]);
+            if ($line === '') {
+                continue;
+            }
+
+            if ($licenseNo === '' && preg_match('/License\s+No\.\s*([A-Z0-9-]+)/i', $line, $m)) {
+                $licenseNo = strtoupper(trim($m[1]));
+            }
+
+            if (! preg_match('/^Item\s+No\.\s*\d+\s+Hs\s+code\s+(\d{6,12})/i', $line, $itemMatch)) {
+                continue;
+            }
+
+            $hscode = trim($itemMatch[1]);
+            $description = '';
+            $usedQty = '';
+            $balanceQty = '';
+
+            $j = $i + 1;
+            while ($j < $totalLines && ! preg_match('/^Description\s+of\s+goods$/i', trim($lines[$j]))) {
+                if (preg_match('/^Item\s+No\./i', trim($lines[$j]))) {
+                    break;
+                }
+                $j++;
+            }
+
+            if ($j < $totalLines && preg_match('/^Description\s+of\s+goods$/i', trim($lines[$j]))) {
+                $j++;
+                while ($j < $totalLines) {
+                    $descLine = trim($lines[$j]);
+                    if (
+                        $descLine === ''
+                        || preg_match('/^Unit\s+price\s+Quantity\s+Unit\s+code/i', $descLine)
+                        || preg_match('/^Used\s+total\s+quantity/i', $descLine)
+                        || preg_match('/^Item\s+No\./i', $descLine)
+                        || preg_match('/^\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}$/', $descLine)
+                    ) {
+                        break;
+                    }
+                    $description .= ($description === '' ? '' : ' ').$descLine;
+                    $j++;
+                }
+            }
+
+            while ($j < $totalLines && ! preg_match('/^Used\s+total\s+quantity/i', trim($lines[$j]))) {
+                if (preg_match('/^Item\s+No\./i', trim($lines[$j]))) {
+                    break;
+                }
+                $j++;
+            }
+
+            if ($j < $totalLines && preg_match('/^Used\s+total\s+quantity/i', trim($lines[$j]))) {
+                $j++;
+                while ($j < $totalLines && trim($lines[$j]) === '') {
+                    $j++;
+                }
+                if ($j < $totalLines && preg_match('/([0-9,]+(?:\.\d+)?)\s+([0-9,]+(?:\.\d+)?)/', trim($lines[$j]), $qtyMatch)) {
+                    $usedQty = $this->formatQuantityForSheet($qtyMatch[1]);
+                    $balanceQty = $this->formatQuantityForSheet($qtyMatch[2]);
+                }
+            }
+
+            if ($hscode !== '' && $description !== '' && $usedQty !== '' && $balanceQty !== '') {
+                $rows[] = [
+                    'hscode' => $hscode,
+                    'description' => $this->normalizeDescriptionText($description),
+                    'used_quantity' => $usedQty,
+                    'balance_quantity' => $balanceQty,
+                ];
+            }
+        }
+
+        return [
+            'license_no' => $licenseNo,
+            'rows' => $rows,
+        ];
+    }
+
+    private function applyOilUsageUpdateToGoogleSheet(
+        string $accessToken,
+        string $spreadsheetId,
+        string $sheetName,
+        string $licenseNo,
+        array $usageRows
+    ): int {
+        $sheetRange = rawurlencode($sheetName.'!A:ZZ');
+        $fetchResponse = Http::withToken($accessToken)->get(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$sheetRange}"
+        );
+
+        if (! $fetchResponse->successful()) {
+            throw new \RuntimeException('Google Sheets read failed: '.$fetchResponse->body());
+        }
+
+        $values = $fetchResponse->json('values', []);
+        if (! is_array($values) || $values === []) {
+            throw new \RuntimeException('Google Sheets is empty. Insert data first before update.');
+        }
+
+        $headerRowIdx = $this->findOilHeaderRowIndex($values);
+        if ($headerRowIdx < 0) {
+            throw new \RuntimeException('OIL table header row not found in Google Sheet.');
+        }
+
+        $header = $values[$headerRowIdx] ?? [];
+        $idxLicence = $this->findHeaderIndex($header, ['licence', 'license']);
+        $idxHscode = $this->findHeaderIndex($header, ['hscode', 'hs code']);
+        $idxDescription = $this->findHeaderIndex($header, ['descriptionofgoods', 'description']);
+        $idxValueUsd = $this->findHeaderIndex($header, ['valueusd', 'value(usd)']);
+
+        if ($idxLicence < 0 || $idxDescription < 0 || $idxValueUsd < 0) {
+            throw new \RuntimeException('Required columns (Licence, Description of Goods, Value(USD)) are missing.');
+        }
+
+        $idxUsedQty = $this->findHeaderIndex($header, ['usedquantity', 'used total quantity']);
+        $idxBalanceQty = $this->findHeaderIndex($header, ['balancequantity', 'balance quantity']);
+        $columnsAdded = false;
+
+        if ($idxUsedQty < 0 || $idxBalanceQty < 0) {
+            $idxUsedQty = $idxValueUsd + 1;
+            $idxBalanceQty = $idxValueUsd + 2;
+            $header = $this->setCell($header, $idxUsedQty, 'Used Quantity');
+            $header = $this->setCell($header, $idxBalanceQty, 'Balance Quantity');
+            $values[$headerRowIdx] = $header;
+            $columnsAdded = true;
+        }
+
+        $usageCandidates = array_values($usageRows);
+
+        $updatedCount = 0;
+        for ($r = $headerRowIdx + 1; $r < count($values); $r++) {
+            $row = $values[$r] ?? [];
+
+            $rowLicence = trim((string) ($row[$idxLicence] ?? ''));
+            if (strcasecmp($rowLicence, $licenseNo) !== 0) {
+                continue;
+            }
+
+            $rowHscode = trim((string) ($row[$idxHscode] ?? ''));
+            $rowDesc = trim((string) ($row[$idxDescription] ?? ''));
+            $matched = $this->findBestUsageMatch($usageCandidates, $rowHscode, $rowDesc);
+            if ($matched === null) {
+                continue;
+            }
+
+            $existingUsed = (string) ($row[$idxUsedQty] ?? '');
+            $nextUsed = $this->sumQuantities($existingUsed, (string) ($matched['used_quantity'] ?? ''));
+            $row = $this->setCell($row, $idxUsedQty, $nextUsed);
+            $row = $this->setCell($row, $idxBalanceQty, (string) ($matched['balance_quantity'] ?? ''));
+            $values[$r] = $row;
+            $updatedCount++;
+        }
+
+        $tableValues = array_slice($values, $headerRowIdx);
+        $updateStartRange = rawurlencode($sheetName.'!A'.($headerRowIdx + 1));
+        $updateResponse = Http::withToken($accessToken)->put(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$updateStartRange}?valueInputOption=RAW",
+            [
+                'majorDimension' => 'ROWS',
+                'values' => $tableValues,
+            ]
+        );
+
+        if (! $updateResponse->successful()) {
+            throw new \RuntimeException('Google Sheets update failed: '.$updateResponse->body());
+        }
+
+        if ($updatedCount === 0 && ! $columnsAdded) {
+            throw new \RuntimeException('No matching OIL rows found for update (check Licence/Description).');
+        }
+
+        return $updatedCount;
+    }
+
+    private function findOilHeaderRowIndex(array $values): int
+    {
+        foreach ($values as $i => $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $idxDoc = $this->findHeaderIndex($row, ['documentno']);
+            $idxDesc = $this->findHeaderIndex($row, ['descriptionofgoods']);
+            $idxValue = $this->findHeaderIndex($row, ['valueusd', 'value(usd)']);
+            if ($idxDoc >= 0 && $idxDesc >= 0 && $idxValue >= 0) {
+                return (int) $i;
+            }
+        }
+
+        return -1;
+    }
+
+    private function findHeaderIndex(array $row, array $candidates): int
+    {
+        $normalizedCandidates = array_map([$this, 'normalizeHeaderKey'], $candidates);
+        foreach ($row as $idx => $cell) {
+            $key = $this->normalizeHeaderKey((string) $cell);
+            if (in_array($key, $normalizedCandidates, true)) {
+                return (int) $idx;
+            }
+        }
+
+        return -1;
+    }
+
+    private function normalizeHeaderKey(string $value): string
+    {
+        $upper = strtoupper(trim($value));
+        return preg_replace('/[^A-Z0-9]/', '', $upper) ?? $upper;
+    }
+
+    private function normalizeDescriptionText(string $value): string
+    {
+        $value = strtoupper(trim($value));
+        $value = preg_replace('/\s+/', ' ', $value) ?? $value;
+        return preg_replace('/[^A-Z0-9]/', '', $value) ?? $value;
+    }
+
+    private function buildUsageMatchKey(string $licenseNo, string $hscode, string $description): string
+    {
+        $license = strtoupper(trim($licenseNo));
+        $hs = preg_replace('/[^0-9]/', '', $hscode) ?? '';
+        $desc = $this->normalizeDescriptionText($description);
+        if ($license === '' || $hs === '' || $desc === '') {
+            return '';
+        }
+
+        return $license.'|'.$hs.'|'.$desc;
+    }
+
+    private function findBestUsageMatch(array $usageRows, string $rowHscode, string $rowDescription): ?array
+    {
+        $rowHs = preg_replace('/[^0-9]/', '', $rowHscode) ?? '';
+        $rowDescNorm = $this->normalizeDescriptionText($rowDescription);
+        if ($rowDescNorm === '') {
+            return null;
+        }
+
+        $best = null;
+        $bestScore = -1;
+
+        foreach ($usageRows as $candidate) {
+            $candHs = preg_replace('/[^0-9]/', '', (string) ($candidate['hscode'] ?? '')) ?? '';
+            $candDesc = (string) ($candidate['description'] ?? '');
+            if ($candDesc === '') {
+                continue;
+            }
+
+            $descMatch = $this->descriptionLooksMatching($rowDescNorm, $candDesc);
+            if (! $descMatch) {
+                continue;
+            }
+
+            $score = 1;
+            if ($rowHs !== '' && $candHs !== '' && $rowHs === $candHs) {
+                $score += 2;
+            }
+            if ($rowDescNorm === $candDesc) {
+                $score += 2;
+            }
+
+            if ($score > $bestScore) {
+                $best = $candidate;
+                $bestScore = $score;
+            }
+        }
+
+        return $best;
+    }
+
+    private function descriptionLooksMatching(string $sheetDescNorm, string $extractDescNorm): bool
+    {
+        if ($sheetDescNorm === '' || $extractDescNorm === '') {
+            return false;
+        }
+
+        if ($sheetDescNorm === $extractDescNorm) {
+            return true;
+        }
+
+        if (str_contains($sheetDescNorm, $extractDescNorm) || str_contains($extractDescNorm, $sheetDescNorm)) {
+            return true;
+        }
+
+        $short = strlen($sheetDescNorm) < strlen($extractDescNorm) ? $sheetDescNorm : $extractDescNorm;
+        $long = $short === $sheetDescNorm ? $extractDescNorm : $sheetDescNorm;
+        if (strlen($short) < 18) {
+            return false;
+        }
+
+        $head = substr($short, 0, 18);
+        $tail = substr($short, -18);
+
+        return str_contains($long, $head) && str_contains($long, $tail);
+    }
+
+    private function sumQuantities(string $existing, string $incoming): string
+    {
+        $a = (float) str_replace(',', '', trim($existing));
+        $b = (float) str_replace(',', '', trim($incoming));
+        $sum = $a + $b;
+
+        return number_format($sum, 2, '.', '');
+    }
+
+    private function setCell(array $row, int $index, string $value): array
+    {
+        $currentCount = count($row);
+        if ($index >= $currentCount) {
+            for ($i = $currentCount; $i <= $index; $i++) {
+                $row[$i] = '';
+            }
+        }
+        $row[$index] = $value;
+
+        return $row;
+    }
+
+    private function formatQuantityForSheet(string $value): string
+    {
+        $clean = str_replace(',', '', trim($value));
+        if (! preg_match('/^-?\d+(?:\.\d+)?$/', $clean)) {
+            return trim($value);
+        }
+
+        return number_format((float) $clean, 2, '.', '');
+    }
+
+    private function writeRowsToGoogleSheet(
+        string $accessToken,
+        string $spreadsheetId,
+        string $sheetName,
+        array $values,
+        string $operationMode,
+        string $appendRange
+    ) {
+        if ($operationMode === 'update') {
+            $clearRange = rawurlencode($sheetName.'!A:Z');
+            $clearResponse = Http::withToken($accessToken)->post(
+                "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$clearRange}:clear",
+                []
+            );
+            if (! $clearResponse->successful()) {
+                throw new \RuntimeException('Google Sheets clear failed: '.$clearResponse->body());
+            }
+
+            $updateRange = rawurlencode($sheetName.'!A1');
+            return Http::withToken($accessToken)->put(
+                "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$updateRange}?valueInputOption=RAW",
+                [
+                    'majorDimension' => 'ROWS',
+                    'values' => $values,
+                ]
+            );
+        }
+
+        return Http::withToken($accessToken)->post(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$appendRange}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS",
+            [
+                'majorDimension' => 'ROWS',
+                'values' => $values,
+            ]
+        );
     }
 
     private function fetchGoogleAccessToken(string $serviceAccountEmail, string $serviceAccountPrivateKey): string
@@ -418,13 +815,13 @@ class PdfController extends Controller
                 fputcsv($stream, [
                     'No',
                     'Document No',
+                    'Licence',
                     'Importer (Name & Address)',
                     'Registration No/Valid Date',
                     'Consignor (Name & Address)',
                     'Last Date of Import',
                     'Mode of transport',
                     'Place/Port of discharge',
-                    'Licence',
                     'Country Whence Consigned',
                     'Country of Origin',
                     'Method of Import',
@@ -441,13 +838,13 @@ class PdfController extends Controller
                     fputcsv($stream, [
                         $row['no'],
                         $this->stripMyanmarText($metadata['document_no']),
+                        $this->stripMyanmarText($metadata['licence']),
                         $this->stripMyanmarText($metadata['importer']),
                         $this->stripMyanmarText($metadata['registration_valid_date']),
                         $this->stripMyanmarText($metadata['consignor']),
                         $this->stripMyanmarText($metadata['last_date_of_import']),
                         $this->stripMyanmarText($metadata['mode_of_transport']),
                         $this->stripMyanmarText($metadata['place_port_of_discharge']),
-                        $this->stripMyanmarText($metadata['licence']),
                         $this->stripMyanmarText($metadata['country_whence_consigned']),
                         $this->stripMyanmarText($metadata['country_of_origin']),
                         $this->stripMyanmarText($metadata['method_of_import']),
@@ -581,7 +978,7 @@ class PdfController extends Controller
             'total_cif_kyats' => '',
         ];
 
-        if (preg_match('/Licence No\.\s*([A-Z0-9-]+)/i', $normalizedText, $m)) {
+        if (preg_match('/Licence\s*No\.?\s*([A-Z0-9-]+)/i', $normalizedText, $m)) {
             $metadata['licence'] = $m[1];
         }
 
@@ -593,46 +990,47 @@ class PdfController extends Controller
             $metadata['registration_valid_date'] = trim($m[0]);
         }
 
-        if (preg_match('/1\.\s*Importer \(Name & Address\)(.*?)(?:\n3\.\s*Consignor|\z)/is', $normalizedText, $m)) {
+        if (preg_match('/1\.\s*Importer\s*\(Name\s*&\s*Address\)(.*?)(?:\n3\.\s*Consignor|\z)/is', $normalizedText, $m)) {
             $importerBlock = (string) $m[1];
 
-            if (preg_match('/^(.*?)7\.\s*Licence No\./is', $importerBlock, $regSeg)) {
+            if (preg_match('/^(.*?)7\.\s*Licence\s*No\.?/is', $importerBlock, $regSeg)) {
                 $metadata['registration_valid_date'] = $this->normalizeRegistrationAndDate($regSeg[1]);
             }
 
-            $importerBlock = preg_replace('/^.*?7\.\s*Licence No\.[^\n)]*(?:\([^)]*\))?\s*/is', '', $importerBlock) ?? $importerBlock;
+            $importerBlock = preg_replace('/^.*?7\.\s*Licence\s*No\.?[^\n)]*(?:\([^)]*\))?\s*/is', '', $importerBlock) ?? $importerBlock;
             $importerClean = trim(preg_replace('/\s+/', ' ', $importerBlock) ?? '');
             $importerClean = ltrim($importerClean, " )\t\n\r\0\x0B");
             $metadata['importer'] = $importerClean;
         }
 
-        if (preg_match('/3\.\s*Consignor \(Name & Address\)(.*?)(?:\n4\.\s*Last Date of Import|\z)/is', $normalizedText, $m)) {
+        if (preg_match('/3\.\s*Consignor\s*\(Name\s*&\s*Address\)(.*?)(?:\n4\.\s*Last\s*Date\s*of\s*Import|\z)/is', $normalizedText, $m)) {
             $metadata['consignor'] = trim(preg_replace('/\s+/', ' ', $m[1]) ?? '');
         }
 
-        if (preg_match('/4\.\s*Last Date of Import\s+8\.\s*Country Whence Consigned\s*\n?([^\n]+)/i', $normalizedText, $m)) {
+        if (preg_match('/4\.\s*Last\s*Date\s*of\s*Import\s+8\.\s*Country\s*Whence\s*Consigned\s*\n?([^\n]+)/i', $normalizedText, $m)) {
             if (preg_match('/(\d{2}\/\d{2}\/\d{4})\s+(.+)/', trim($m[1]), $parts)) {
                 $metadata['last_date_of_import'] = $parts[1];
                 $metadata['country_whence_consigned'] = trim($parts[2]);
             }
         }
 
-        if (preg_match('/9\.\s*Country of Origin\s*\n?([^\n]+)/i', $normalizedText, $m)) {
+        if (preg_match('/9\.\s*Country\s*of\s*Origin\s*\n?([^\n]+)/i', $normalizedText, $m)) {
             $metadata['country_of_origin'] = trim($m[1]);
         }
 
-        if (preg_match('/5\.\s*Mode of Transport\s+10\.\s*Method of Import\s*\n?([^\n]+)/i', $normalizedText, $m)) {
+        if (preg_match('/5\.\s*Mode\s*of\s*Transport\s+10\.\s*Method\s*of\s*Import\s*\n?([^\n]+)/i', $normalizedText, $m)) {
             $line = trim($m[1]);
             if (preg_match('/^(Sea|Road|Air)(?:\s+(Sea|Road|Air))?(?:\s+(Sea|Road|Air))?\s+(.*)$/i', $line, $parts)) {
                 $modes = array_filter([$parts[1] ?? null, $parts[2] ?? null, $parts[3] ?? null]);
                 $metadata['mode_of_transport'] = trim(implode(' ', $modes));
-                $metadata['method_of_import'] = trim($parts[4] ?? '');
+                $method = trim($parts[4] ?? '');
+                $metadata['method_of_import'] = preg_replace('/\bNormalTT\b/i', 'Normal TT', $method) ?? $method;
             } else {
                 $metadata['mode_of_transport'] = $line;
             }
         }
 
-        if (preg_match('/6\.\s*Place\/Port of Discharge\s+12\.\s*Total CIF Value \(Kyats\)\s*\n?([^\n]+)/i', $normalizedText, $m)) {
+        if (preg_match('/6\.\s*Place\/Port\s*of\s*Discharge\s+12\.\s*Total\s*CIF\s*Value\s*\(Kyats\)\s*\n?([^\n]+)/i', $normalizedText, $m)) {
             if (preg_match('/(.+?)\s+([0-9,]+\.\d+)/', trim($m[1]), $parts)) {
                 $metadata['place_port_of_discharge'] = trim($parts[1]);
                 $metadata['total_cif_kyats'] = trim($parts[2]);
