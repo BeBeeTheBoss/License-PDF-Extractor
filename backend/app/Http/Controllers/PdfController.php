@@ -46,12 +46,33 @@ class PdfController extends Controller
             $request->input('spreadsheet_id'),
             $operationMode
         );
-        $exportResult = $this->generateGoogleSheetsCsvExport(
-            $documentType,
-            $file->getClientOriginalName(),
-            $path,
-            $extractedText
-        );
+
+        if (($sheetsResult['status'] ?? '') === 'error') {
+            return response()->json([
+                'message' => (string) ($sheetsResult['message'] ?? 'Failed to save to Google Sheets. Please try again.'),
+                'google_sheets' => $sheetsResult,
+                'downloadable_sheet' => [
+                    'status' => 'skipped',
+                    'message' => 'CSV export skipped due to Google Sheets error.',
+                    'download_url' => null,
+                ],
+            ], 422);
+        }
+
+        if ($operationMode === 'update') {
+            $exportResult = [
+                'status' => 'skipped',
+                'message' => 'CSV export is skipped in update mode.',
+                'download_url' => null,
+            ];
+        } else {
+            $exportResult = $this->generateGoogleSheetsCsvExport(
+                $documentType,
+                $file->getClientOriginalName(),
+                $path,
+                $extractedText
+            );
+        }
 
         return response()->json([
             'message' => 'PDF processed',
@@ -157,6 +178,10 @@ class PdfController extends Controller
                 $exchangeInfo = $this->fetchExchangeRatesToUsdRows();
                 $sheetAppendRange = rawurlencode($sheetName.'!A:R');
                 $values = [];
+                if ($operationMode === 'insert' && (!($exchangeInfo['ok'] ?? false) || $exchangeInfo['rows'] === [])) {
+                    throw new \RuntimeException('Exchange rate API is unavailable. Please try again.');
+                }
+
                 if ($exchangeInfo['rows'] !== []) {
                     $values[] = [
                         '',
@@ -1138,19 +1163,19 @@ class PdfController extends Controller
             if ($provider === 'exchangerate_api') {
                 if ($apiKey === '') {
                     Log::warning('FX_PROVIDER is exchangerate_api but FX_API_KEY is missing.');
-                    return ['as_of' => $defaultAsOf, 'rows' => []];
+                    return ['as_of' => $defaultAsOf, 'rows' => [], 'ok' => false, 'error' => 'FX_API_KEY is missing.'];
                 }
 
                 $response = Http::timeout(10)->get("https://v6.exchangerate-api.com/v6/{$apiKey}/latest/USD");
                 if (! $response->successful()) {
                     Log::warning('ExchangeRate-API request failed', ['status' => $response->status(), 'body' => $response->body()]);
-                    return ['as_of' => $defaultAsOf, 'rows' => []];
+                    return ['as_of' => $defaultAsOf, 'rows' => [], 'ok' => false, 'error' => 'Exchange rate API request failed.'];
                 }
 
                 $result = (string) $response->json('result');
                 if ($result !== 'success') {
                     Log::warning('ExchangeRate-API response not successful', ['result' => $result, 'body' => $response->body()]);
-                    return ['as_of' => $defaultAsOf, 'rows' => []];
+                    return ['as_of' => $defaultAsOf, 'rows' => [], 'ok' => false, 'error' => 'Exchange rate API returned non-success result.'];
                 }
 
                 $rates = (array) $response->json('conversion_rates', []);
@@ -1164,7 +1189,7 @@ class PdfController extends Controller
                     $rows[] = [$labelMap[$symbol], $this->formatExchangeRate($toUsd)];
                 }
 
-                return ['as_of' => $defaultAsOf, 'rows' => $rows];
+                return ['as_of' => $defaultAsOf, 'rows' => $rows, 'ok' => $rows !== [], 'error' => $rows === [] ? 'No exchange rate rows returned.' : ''];
             }
 
             foreach ($urls as $url) {
@@ -1191,15 +1216,16 @@ class PdfController extends Controller
                 }
 
                 if ($rows !== []) {
-                    return ['as_of' => $asOf, 'rows' => $rows];
+                    return ['as_of' => $asOf, 'rows' => $rows, 'ok' => true, 'error' => ''];
                 }
             }
         } catch (\Throwable $e) {
             Log::warning('Exchange rate fetch failed', ['error' => $e->getMessage()]);
+            return ['as_of' => $defaultAsOf, 'rows' => [], 'ok' => false, 'error' => $e->getMessage()];
         }
 
         Log::warning('Exchange rate fetch unavailable, no exchange rows will be inserted.');
-        return ['as_of' => $defaultAsOf, 'rows' => []];
+        return ['as_of' => $defaultAsOf, 'rows' => [], 'ok' => false, 'error' => 'Exchange rate fetch unavailable.'];
     }
 
     private function formatExchangeRate(float $value): string
