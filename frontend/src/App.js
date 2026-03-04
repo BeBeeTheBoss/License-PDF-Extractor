@@ -554,10 +554,14 @@ function App() {
             Update
           </button>
         </div>
-        <div className="card-flip">
-          <div className={`card-flip-inner ${operationMode === "update" ? "is-flipped" : ""}`}>
-            <section className="glass-card card-face card-front">{renderCardFace("insert", insertFileInputRef)}</section>
-            <section className="glass-card card-face card-back">{renderCardFace("update", updateFileInputRef)}</section>
+        <div className="card-flip card-slider" data-mode={operationMode}>
+          <div className={`card-track ${operationMode === "update" ? "to-update" : "to-insert"}`}>
+            <section className="glass-card card-face card-slide insert-card">
+              <div className="card-content">{renderCardFace("insert", insertFileInputRef)}</div>
+            </section>
+            <section className="glass-card card-face card-slide update-card">
+              <div className="card-content">{renderCardFace("update", updateFileInputRef)}</div>
+            </section>
           </div>
         </div>
       </div>
