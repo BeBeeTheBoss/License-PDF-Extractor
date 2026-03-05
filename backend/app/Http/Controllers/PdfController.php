@@ -145,7 +145,7 @@ class PdfController extends Controller
                 }
             }
 
-            if ($operationMode === 'update' && $documentType === 'OIL') {
+            if ($operationMode === 'update' && in_array($documentType, ['OIL', 'YGN'], true)) {
                 $usageUpdate = $this->extractOilUsageUpdateRows($text);
                 if ($usageUpdate['license_no'] !== '' && $usageUpdate['rows'] !== []) {
                     $updatedCount = $this->applyOilUsageUpdateToGoogleSheet(
@@ -158,7 +158,7 @@ class PdfController extends Controller
 
                     return [
                         'status' => 'success',
-                        'message' => "OIL sheet updated ({$updatedCount} matched row(s)).",
+                        'message' => "{$documentType} sheet updated ({$updatedCount} matched row(s)).",
                         'spreadsheet_url' => $spreadsheetUrl,
                     ];
                 }
@@ -706,7 +706,7 @@ class PdfController extends Controller
             $clearRange = rawurlencode($sheetName.'!A:Z');
             $clearResponse = Http::withToken($accessToken)->post(
                 "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$clearRange}:clear",
-                []
+                (object) []
             );
             if (! $clearResponse->successful()) {
                 throw new \RuntimeException('Google Sheets clear failed: '.$clearResponse->body());
@@ -940,6 +940,26 @@ class PdfController extends Controller
         $lines = preg_split('/\n/u', $normalizedText) ?: [];
         $rows = [];
         $current = null;
+        $inDescription = false;
+
+        $flushCurrent = function () use (&$current, &$rows, &$inDescription): void {
+            if ($current !== null) {
+                $hasRequired = $current['no'] !== ''
+                    && $current['hscode'] !== ''
+                    && $current['description'] !== ''
+                    && $current['unit_code'] !== ''
+                    && $current['unit_price'] !== ''
+                    && $current['quantity'] !== ''
+                    && $current['value_usd'] !== '';
+                if ($hasRequired) {
+                    $current['description'] = trim(preg_replace('/\s+/', ' ', $current['description']) ?? $current['description']);
+                    $rows[] = $current;
+                }
+            }
+
+            $current = null;
+            $inDescription = false;
+        };
 
         foreach ($lines as $lineRaw) {
             $line = trim($lineRaw);
@@ -947,40 +967,90 @@ class PdfController extends Controller
                 continue;
             }
 
-            if (preg_match('/^(\d{1,3})\s+(\d{8,12})\s+(.+?)\s+([A-Za-z])\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)$/', $line, $m)) {
-                if ($current !== null) {
-                    $rows[] = $current;
-                }
+            if (str_starts_with($line, 'Total Value')) {
+                $flushCurrent();
+                break;
+            }
+
+            // Format A: "Item No. 1 Hs code 3923109000"
+            if (preg_match('/^Item\s+No\.\s*(\d{1,3})\s+Hs\s+code\s+(\d{6,12})/i', $line, $m)) {
+                $flushCurrent();
+                $current = [
+                    'no' => $m[1],
+                    'hscode' => $m[2],
+                    'description' => '',
+                    'unit_code' => '',
+                    'unit_price' => '',
+                    'quantity' => '',
+                    'value_usd' => '',
+                ];
+                continue;
+            }
+
+            // Format B: one-line table row.
+            if (preg_match('/^(\d{1,3})[.)]?\s+(\d{6,12})\s+(.+?)\s+([A-Za-z]{1,10})\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)$/', $line, $m)) {
+                $flushCurrent();
                 $current = [
                     'no' => $m[1],
                     'hscode' => $m[2],
                     'description' => $m[3],
                     'unit_code' => strtoupper($m[4]),
-                    'unit_price' => $m[5],
-                    'quantity' => $m[6],
-                    'value_usd' => $m[7],
+                    'unit_price' => str_replace(',', '', $m[5]),
+                    'quantity' => str_replace(',', '', $m[6]),
+                    'value_usd' => str_replace(',', '', $m[7]),
                 ];
+                $flushCurrent();
                 continue;
             }
 
-            if ($current !== null && ! str_starts_with($line, 'Total Value')) {
-                if (
-                    str_starts_with($line, 'Brand Name')
-                    || str_starts_with($line, 'Material')
-                    || str_starts_with($line, 'Size')
-                ) {
-                    $current['description'] .= ' | '.$line;
-                }
+            if ($current === null) {
+                continue;
             }
 
-            if (str_starts_with($line, 'Total Value')) {
-                break;
+            if (preg_match('/^Description\s+of\s+goods$/i', $line)) {
+                $inDescription = true;
+                continue;
+            }
+
+            if (preg_match('/^Unit\s+price\s+Quantity\s+Unit\s+code/i', $line)) {
+                $inDescription = false;
+                continue;
+            }
+
+            // YGN value line: "184.800 600.00 U 110,880.000 THB"
+            if (preg_match('/^([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([A-Za-z]{1,10})\s+([0-9][0-9,]*(?:\.\d+)?)\s+[A-Za-z]{3}$/', $line, $m)) {
+                $current['unit_price'] = str_replace(',', '', $m[1]);
+                $current['quantity'] = str_replace(',', '', $m[2]);
+                $current['unit_code'] = strtoupper($m[3]);
+                $current['value_usd'] = str_replace(',', '', $m[4]);
+                continue;
+            }
+
+            // Alternative split tail: "U 184.800 600.00 110,880.000"
+            if (preg_match('/^([A-Za-z]{1,10})\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)$/', $line, $m)) {
+                $current['unit_code'] = strtoupper($m[1]);
+                $current['unit_price'] = str_replace(',', '', $m[2]);
+                $current['quantity'] = str_replace(',', '', $m[3]);
+                $current['value_usd'] = str_replace(',', '', $m[4]);
+                continue;
+            }
+
+            if (preg_match('/^Used\s+total\s+quantity/i', $line)) {
+                continue;
+            }
+            if (preg_match('/^[0-9][0-9,]*(?:\.\d+)?\s+[0-9][0-9,]*(?:\.\d+)?(?:\s+.*)?$/', $line)) {
+                continue;
+            }
+            if (preg_match('/^\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}$/', $line)) {
+                continue;
+            }
+
+            if ($inDescription || $current['description'] === '') {
+                $current['description'] .= ($current['description'] === '' ? '' : ' ').$line;
             }
         }
 
-        if ($current !== null) {
-            $rows[] = $current;
-        }
+        $flushCurrent();
 
         return $rows;
     }
