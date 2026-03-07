@@ -988,7 +988,7 @@ class PdfController extends Controller
             }
 
             // Format B: one-line table row.
-            if (preg_match('/^(\d{1,3})[.)]?\s+(\d{6,12})\s+(.+?)\s+([A-Za-z]{1,10})\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)$/', $line, $m)) {
+            if (preg_match('/^(\d{1,3})[.)]?\s+(\d{6,12})\s+(.+?)\s+(\S{1,16})\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)$/', $line, $m)) {
                 $flushCurrent();
                 $current = [
                     'no' => $m[1],
@@ -1018,7 +1018,7 @@ class PdfController extends Controller
             }
 
             // YGN value line: "184.800 600.00 U 110,880.000 THB"
-            if (preg_match('/^([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([A-Za-z]{1,10})\s+([0-9][0-9,]*(?:\.\d+)?)\s+[A-Za-z]{3}$/', $line, $m)) {
+            if (preg_match('/^([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+(\S{1,16})\s+([0-9][0-9,]*(?:\.\d+)?)\s+[A-Za-z]{3}$/', $line, $m)) {
                 $current['unit_price'] = str_replace(',', '', $m[1]);
                 $current['quantity'] = str_replace(',', '', $m[2]);
                 $current['unit_code'] = strtoupper($m[3]);
@@ -1027,7 +1027,7 @@ class PdfController extends Controller
             }
 
             // Alternative split tail: "U 184.800 600.00 110,880.000"
-            if (preg_match('/^([A-Za-z]{1,10})\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)$/', $line, $m)) {
+            if (preg_match('/^(\S{1,16})\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)\s+([0-9][0-9,]*(?:\.\d+)?)$/', $line, $m)) {
                 $current['unit_code'] = strtoupper($m[1]);
                 $current['unit_price'] = str_replace(',', '', $m[2]);
                 $current['quantity'] = str_replace(',', '', $m[3]);
@@ -1169,7 +1169,7 @@ class PdfController extends Controller
 
     private function extractOilTotalValueUsd(string $text, array $oilRows): string
     {
-        if (preg_match('/Total\s+Value\s+[A-Za-z]\s+\d+(?:\.\d+)?\s+(\d+(?:\.\d+)?)/i', $text, $m)) {
+        if (preg_match('/Total\s+Value\s+\S+\s+\d+(?:\.\d+)?\s+(\d+(?:\.\d+)?)/i', $text, $m)) {
             return $m[1];
         }
 
@@ -1183,7 +1183,7 @@ class PdfController extends Controller
 
     private function extractOilTotalQuantity(string $text, array $oilRows): string
     {
-        if (preg_match('/Total\s+Value\s+[A-Za-z]\s+(\d+(?:\.\d+)?)\s+\d+(?:\.\d+)?/i', $text, $m)) {
+        if (preg_match('/Total\s+Value\s+\S+\s+(\d+(?:\.\d+)?)\s+\d+(?:\.\d+)?/i', $text, $m)) {
             return $m[1];
         }
 
