@@ -52,6 +52,11 @@ function App() {
   const [submitError, setSubmitError] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [fixing, setFixing] = useState(false);
+  const [fixMessage, setFixMessage] = useState("");
+  const [fixError, setFixError] = useState("");
+  const [fixSheetsUrl, setFixSheetsUrl] = useState("");
+  const [fixDebug, setFixDebug] = useState(null);
   const insertFileInputRef = useRef(null);
   const updateFileInputRef = useRef(null);
 
@@ -103,11 +108,62 @@ function App() {
     setSubmitError("");
     setLoading(false);
     setProgress(0);
+    setFixing(false);
+    setFixMessage("");
+    setFixError("");
+    setFixSheetsUrl("");
+    setFixDebug(null);
     if (insertFileInputRef.current) {
       insertFileInputRef.current.value = "";
     }
     if (updateFileInputRef.current) {
       updateFileInputRef.current.value = "";
+    }
+  };
+
+  const handleFixDocumentDates = async () => {
+    if (!documentType) {
+      setFieldError("documentType", "Please choose document type.");
+      return;
+    }
+
+    setFixing(true);
+    setFixMessage("");
+    setFixError("");
+    setFixSheetsUrl("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/fix-document-dates`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          document_type: documentType,
+          ...(spreadsheetId.trim() ? { spreadsheet_id: spreadsheetId.trim() } : {}),
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || "Fix failed.");
+      }
+
+      setFixMessage(payload?.message || "Document dates fixed.");
+      setFixSheetsUrl(payload?.spreadsheet_url || "");
+      setFixDebug(payload?.debug || null);
+    } catch (error) {
+      if ((error.message || "").toLowerCase().includes("unauthorized")) {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        setAuthToken("");
+        setIsAuthenticated(false);
+        setAuthEmail("");
+      }
+      setFixError(error.message || "Fix failed.");
+    } finally {
+      setFixing(false);
     }
   };
 
@@ -357,8 +413,31 @@ function App() {
             {loading ? (isUpdate ? "Updating..." : "Inserting...") : isUpdate ? "Update Sheet" : "Insert Data"}
           </button>
         </div>
+        {isUpdate && (
+          <div className="fix-panel">
+            <div>
+              <p className="fix-title">Fix older table</p>
+              <p className="fix-subtitle">
+                Adds `Document Date` after `Document No` and fills missing values using `Last Date of Import - 3 months + 1 day`.
+              </p>
+            </div>
+            <button className="upload-btn secondary-btn" onClick={handleFixDocumentDates} disabled={fixing || loading}>
+              {fixing ? "Fixing..." : "Fix Document Dates"}
+            </button>
+          </div>
+        )}
         {fieldErrors.file && <p className="input-error">{fieldErrors.file}</p>}
         {submitError && <p className="input-error">{submitError}</p>}
+        {fixError && <p className="input-error">{fixError}</p>}
+        {fixMessage && !fixError && <p className="status-hint">{fixMessage}</p>}
+        {fixSheetsUrl && (
+          <a className="sheet-link" href={fixSheetsUrl} target="_blank" rel="noreferrer">
+            Open Google Sheet
+          </a>
+        )}
+        {fixDebug && (
+          <pre className="debug-box">{JSON.stringify(fixDebug, null, 2)}</pre>
+        )}
 
         <p className="file-name">{file ? `Selected: ${file.name}` : "No file selected."}</p>
 

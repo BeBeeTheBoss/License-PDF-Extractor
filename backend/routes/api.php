@@ -10,6 +10,7 @@ Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('admi
 
 Route::middleware('admin.auth')->group(function () {
     Route::post('/upload', [PdfController::class, 'upload']);
+    Route::post('/fix-document-dates', [PdfController::class, 'fixDocumentDates']);
     Route::get('/exports/{filename}', [PdfController::class, 'downloadExport'])
         ->where('filename', '[A-Za-z0-9._-]+')
         ->name('exports.download');

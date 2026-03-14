@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Carbon\Carbon;
 
 class PdfController extends Controller
 {
@@ -96,6 +97,64 @@ class PdfController extends Controller
         ]);
     }
 
+    public function fixDocumentDates(Request $request)
+    {
+        $request->validate([
+            'document_type' => 'required|in:OIL,YGN',
+            'spreadsheet_id' => 'nullable|string|regex:/^[a-zA-Z0-9-_]+$/',
+        ]);
+
+        $documentType = (string) $request->input('document_type');
+        $typeSpecificSpreadsheetId = $documentType === 'OIL'
+            ? trim((string) env('GOOGLE_SHEETS_SPREADSHEET_ID_OIL', ''))
+            : trim((string) env('GOOGLE_SHEETS_SPREADSHEET_ID_YGN', ''));
+        $spreadsheetId = trim((string) ($request->input('spreadsheet_id')
+            ?: ($typeSpecificSpreadsheetId !== '' ? $typeSpecificSpreadsheetId : config('services.google_sheets.spreadsheet_id'))));
+        $sheetName = (string) config('services.google_sheets.sheet_name', 'Sheet1');
+        $serviceAccountEmail = (string) config('services.google_sheets.service_account_email');
+        $serviceAccountPrivateKey = (string) config('services.google_sheets.service_account_private_key');
+        $spreadsheetUrl = $spreadsheetId !== ''
+            ? "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/edit#gid=0"
+            : null;
+
+        if ($serviceAccountEmail === '' || $serviceAccountPrivateKey === '') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Google Sheets is not configured.',
+                'spreadsheet_url' => $spreadsheetUrl,
+            ], 422);
+        }
+
+        if ($spreadsheetId === '') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Spreadsheet ID is required to fix document dates.',
+                'spreadsheet_url' => $spreadsheetUrl,
+            ], 422);
+        }
+
+        try {
+            $accessToken = $this->fetchGoogleAccessToken($serviceAccountEmail, $serviceAccountPrivateKey);
+            $result = $this->backfillDocumentDatesInSheet($accessToken, $spreadsheetId, $sheetName);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => $result['message'],
+                'updated_rows' => $result['updated_rows'],
+                'column_added' => $result['column_added'],
+                'debug' => $result['debug'] ?? null,
+                'spreadsheet_url' => $spreadsheetUrl,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Document date backfill failed', ['error' => $e->getMessage()]);
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+                'spreadsheet_url' => $spreadsheetUrl,
+            ], 422);
+        }
+    }
+
     private function appendExtractedTextToGoogleSheet(
         string $documentType,
         string $fileName,
@@ -176,7 +235,7 @@ class PdfController extends Controller
 
                 $metadata = $this->extractDocumentMetadata($text);
                 $exchangeInfo = $this->fetchExchangeRatesToUsdRows();
-                $sheetAppendRange = rawurlencode($sheetName.'!A:R');
+                $sheetAppendRange = rawurlencode($sheetName.'!A:S');
                 $values = [];
                 if ($operationMode === 'insert' && (!($exchangeInfo['ok'] ?? false) || $exchangeInfo['rows'] === [])) {
                     throw new \RuntimeException('Exchange rate API is unavailable. Please try again.');
@@ -203,16 +262,18 @@ class PdfController extends Controller
                         '',
                         '',
                         '',
+                        '',
                     ];
-                    $values[] = ['No', 'Currency', 'Rate to USD', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+                    $values[] = ['No', 'Currency', 'Rate to USD', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
                     foreach ($exchangeInfo['rows'] as $idx => $rateRow) {
-                        $values[] = [(string) ($idx + 1), $rateRow[0], $rateRow[1], '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+                        $values[] = [(string) ($idx + 1), $rateRow[0], $rateRow[1], '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
                     }
-                    $values[] = ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+                    $values[] = ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
                 }
                 $values[] = [
                     'No',
                     'Document No',
+                    'Document Date',
                     'Licence',
                     'Importer (Name & Address)',
                     'Registration No/Valid Date',
@@ -235,6 +296,7 @@ class PdfController extends Controller
                     $values[] = [
                         $row['no'],
                         $this->stripMyanmarText($metadata['document_no']),
+                        $this->stripMyanmarText($metadata['document_date']),
                         $this->stripMyanmarText($metadata['licence']),
                         $this->stripMyanmarText($metadata['importer']),
                         $this->stripMyanmarText($metadata['registration_valid_date']),
@@ -520,8 +582,8 @@ class PdfController extends Controller
             $updatedCount++;
         }
 
-        $tableValues = array_slice($values, $headerRowIdx);
-        $updateStartRange = rawurlencode($sheetName.'!A'.($headerRowIdx + 1));
+        $tableValues = $values;
+        $updateStartRange = rawurlencode($sheetName.'!A1');
         $updateResponse = Http::withToken($accessToken)->put(
             "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$updateStartRange}?valueInputOption=RAW",
             [
@@ -565,6 +627,24 @@ class PdfController extends Controller
             $key = $this->normalizeHeaderKey((string) $cell);
             if (in_array($key, $normalizedCandidates, true)) {
                 return (int) $idx;
+            }
+        }
+
+        return -1;
+    }
+
+    private function findHeaderIndexLoose(array $row, array $candidates): int
+    {
+        $normalizedCandidates = array_map([$this, 'normalizeHeaderKey'], $candidates);
+        foreach ($row as $idx => $cell) {
+            $key = $this->normalizeHeaderKey((string) $cell);
+            if ($key === '') {
+                continue;
+            }
+            foreach ($normalizedCandidates as $candidate) {
+                if ($candidate !== '' && str_contains($key, $candidate)) {
+                    return (int) $idx;
+                }
             }
         }
 
@@ -731,6 +811,487 @@ class PdfController extends Controller
         );
     }
 
+    private function backfillDocumentDatesInSheet(
+        string $accessToken,
+        string $spreadsheetId,
+        string $sheetName
+    ): array {
+        $sheetRange = rawurlencode($sheetName.'!A:ZZ');
+        $fetchResponse = Http::withToken($accessToken)->get(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$sheetRange}"
+        );
+
+        if (! $fetchResponse->successful()) {
+            throw new \RuntimeException('Google Sheets read failed: '.$fetchResponse->body());
+        }
+
+        $values = $fetchResponse->json('values', []);
+        if (! is_array($values) || $values === []) {
+            throw new \RuntimeException('Google Sheets is empty. Insert data first before fixing document dates.');
+        }
+
+        $headerRows = [];
+        foreach ($values as $i => $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $idxDoc = $this->findHeaderIndexLoose($row, ['documentno', 'docno', 'document no']);
+            if ($idxDoc < 0) {
+                continue;
+            }
+            $idxDesc = $this->findHeaderIndexLoose($row, ['descriptionofgoods', 'description']);
+            $idxValue = $this->findHeaderIndexLoose($row, ['valueusd', 'value(usd)']);
+            $idxHs = $this->findHeaderIndexLoose($row, ['hscode', 'hs code']);
+            $idxLicence = $this->findHeaderIndexLoose($row, ['licence', 'license']);
+            if ($idxDesc >= 0 || $idxValue >= 0 || $idxHs >= 0 || $idxLicence >= 0) {
+                $headerRows[] = (int) $i;
+            }
+        }
+
+        $debugHeaders = [];
+        foreach ($headerRows as $rowIdx) {
+            $row = $values[$rowIdx] ?? [];
+            if (! is_array($row)) {
+                $row = [];
+            }
+            $debugHeaders[] = [
+                'row' => $rowIdx + 1,
+                'header' => $row,
+            ];
+        }
+
+        if ($headerRows === []) {
+            throw new \RuntimeException('OIL table header row not found in Google Sheet.');
+        }
+
+        $headerRows[] = count($values);
+        $columnAdded = false;
+        $updatedRows = 0;
+
+        for ($h = 0; $h < count($headerRows) - 1; $h++) {
+            $headerRowIdx = $headerRows[$h];
+            $blockEnd = $headerRows[$h + 1] - 1;
+            if ($blockEnd <= $headerRowIdx) {
+                continue;
+            }
+
+            $header = $values[$headerRowIdx] ?? [];
+            $idxDocNo = $this->findHeaderIndexLoose($header, ['documentno', 'docno', 'document no']);
+            $idxDocDate = $this->findHeaderIndexLoose($header, ['documentdate', 'docdate']);
+            $idxLastDate = $this->findHeaderIndexLoose($header, ['lastdateofimport', 'last date of import']);
+
+            if ($idxDocNo < 0) {
+                continue;
+            }
+
+            $needsInsert = $idxDocDate < 0 || $idxDocDate !== ($idxDocNo + 1);
+            if ($needsInsert) {
+                $insertAt = $idxDocNo + 1;
+                for ($r = $headerRowIdx; $r <= $blockEnd; $r++) {
+                    $row = $values[$r] ?? [];
+                    if (! is_array($row)) {
+                        $row = [];
+                    }
+                    $existingDocDate = '';
+                    if ($r !== $headerRowIdx && $idxDocDate >= 0) {
+                        $existingDocDate = (string) ($row[$idxDocDate] ?? '');
+                    }
+                    array_splice($row, $insertAt, 0, $r === $headerRowIdx ? 'Document Date' : $existingDocDate);
+                    $values[$r] = $row;
+                }
+                $idxDocDate = $insertAt;
+                if ($idxLastDate >= $insertAt) {
+                    $idxLastDate++;
+                }
+                $columnAdded = true;
+            }
+
+            for ($r = $headerRowIdx + 1; $r <= $blockEnd; $r++) {
+                $row = $values[$r] ?? [];
+                if (! is_array($row)) {
+                    $row = [];
+                }
+                if ($idxLastDate < 0) {
+                    $values[$r] = $row;
+                    continue;
+                }
+                $existing = trim((string) ($row[$idxDocDate] ?? ''));
+                if ($existing !== '') {
+                    continue;
+                }
+                $lastDateRaw = (string) ($row[$idxLastDate] ?? '');
+                $docDate = $this->computeDocumentDateFromLastImport($lastDateRaw);
+                if ($docDate === '') {
+                    continue;
+                }
+                $row = $this->setCell($row, $idxDocDate, $docDate);
+                $values[$r] = $row;
+                $updatedRows++;
+            }
+        }
+
+        if ($updatedRows === 0 && ! $columnAdded) {
+            return [
+                'updated_rows' => 0,
+                'column_added' => false,
+                'message' => 'No rows needed updates.',
+            ];
+        }
+
+        $tableValues = $values;
+        $updateStartRange = rawurlencode($sheetName.'!A1');
+        $updateResponse = Http::withToken($accessToken)->put(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$updateStartRange}?valueInputOption=RAW",
+            [
+                'majorDimension' => 'ROWS',
+                'values' => $tableValues,
+            ]
+        );
+
+        if (! $updateResponse->successful()) {
+            throw new \RuntimeException('Google Sheets update failed: '.$updateResponse->body());
+        }
+
+        $splitResult = $this->splitSheetByDocumentDate($accessToken, $spreadsheetId, $values, $headerRows);
+        $message = $columnAdded
+            ? "Document Date column added, {$updatedRows} row(s) updated, {$splitResult['sheets_created']} sheet(s) updated by Document Date."
+            : "{$updatedRows} row(s) updated, {$splitResult['sheets_created']} sheet(s) updated by Document Date.";
+
+        return [
+            'updated_rows' => $updatedRows,
+            'column_added' => $columnAdded,
+            'message' => $message,
+            'debug' => [
+                'header_rows' => $headerRows,
+                'header_samples' => $debugHeaders,
+                'split' => $splitResult,
+            ],
+        ];
+    }
+
+    private function splitSheetByDocumentDate(
+        string $accessToken,
+        string $spreadsheetId,
+        array $values,
+        array $headerRows
+    ): array {
+        $documentSheets = [];
+        $headerRows = array_values(array_unique($headerRows));
+        sort($headerRows);
+        $headerRows[] = count($values);
+
+        for ($h = 0; $h < count($headerRows) - 1; $h++) {
+            $headerRowIdx = $headerRows[$h];
+            $blockEnd = $headerRows[$h + 1] - 1;
+            if ($blockEnd <= $headerRowIdx) {
+                continue;
+            }
+            $header = $values[$headerRowIdx] ?? [];
+            if (! is_array($header)) {
+                continue;
+            }
+            $idxDocDate = $this->findHeaderIndexLoose($header, ['documentdate', 'docdate']);
+            $idxLastDate = $this->findHeaderIndexLoose($header, ['lastdateofimport', 'last date of import']);
+            $idxDocNo = $this->findHeaderIndexLoose($header, ['documentno', 'docno', 'document no']);
+            $idxDesc = $this->findHeaderIndexLoose($header, ['descriptionofgoods', 'description']);
+            $idxQty = $this->findHeaderIndexLoose($header, ['quantity']);
+            $idxValue = $this->findHeaderIndexLoose($header, ['valueusd', 'value(usd)']);
+
+            for ($r = $headerRowIdx + 1; $r <= $blockEnd; $r++) {
+                $row = $values[$r] ?? [];
+                if (! is_array($row)) {
+                    continue;
+                }
+                $docDate = '';
+                if ($idxDocDate >= 0) {
+                    $docDate = trim((string) ($row[$idxDocDate] ?? ''));
+                }
+                if ($docDate === '' && $idxLastDate >= 0) {
+                    $docDate = $this->computeDocumentDateFromLastImport((string) ($row[$idxLastDate] ?? ''));
+                }
+                if ($docDate === '') {
+                    continue;
+                }
+                $sheetTitle = $this->sanitizeSheetTitle($docDate);
+                $docNo = $idxDocNo >= 0 ? trim((string) ($row[$idxDocNo] ?? '')) : '';
+                $blockKey = $docNo !== '' ? $docNo : 'DOC-UNKNOWN';
+                if (! isset($documentSheets[$sheetTitle])) {
+                    $documentSheets[$sheetTitle] = [
+                        'blocks' => [],
+                    ];
+                }
+                if (! isset($documentSheets[$sheetTitle]['blocks'][$blockKey])) {
+                    $documentSheets[$sheetTitle]['blocks'][$blockKey] = [
+                        'header' => $header,
+                        'rows' => [],
+                        'idx_desc' => $idxDesc,
+                        'idx_qty' => $idxQty,
+                        'idx_value' => $idxValue,
+                    ];
+                }
+                $documentSheets[$sheetTitle]['blocks'][$blockKey]['rows'][] = $row;
+            }
+        }
+
+        $existing = $this->fetchSheetTitles($accessToken, $spreadsheetId);
+        $missing = array_values(array_diff(array_keys($documentSheets), $existing));
+        if ($missing !== []) {
+            $this->addSheetsInBatch($accessToken, $spreadsheetId, $missing);
+        }
+
+        $exchangeBlock = $this->extractExchangeBlockFromSheet($values);
+        if ($exchangeBlock === []) {
+            $exchangeInfo = $this->fetchExchangeRatesToUsdRows();
+            $exchangeBlock = $this->buildExchangeBlock($exchangeInfo);
+        }
+        $this->batchClearSheets($accessToken, $spreadsheetId, array_keys($documentSheets));
+        $this->batchWriteSheets($accessToken, $spreadsheetId, $documentSheets, $exchangeBlock);
+        $sheetsCreated = count($documentSheets);
+
+        return [
+            'sheets_created' => $sheetsCreated,
+            'documents' => array_keys($documentSheets),
+        ];
+    }
+
+    private function fetchSheetTitles(string $accessToken, string $spreadsheetId): array
+    {
+        $response = Http::withToken($accessToken)->get(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}?fields=sheets.properties"
+        );
+        if (! $response->successful()) {
+            throw new \RuntimeException('Google Sheets metadata read failed: '.$response->body());
+        }
+        $sheets = (array) $response->json('sheets', []);
+        $titles = [];
+        foreach ($sheets as $sheet) {
+            $title = (string) data_get($sheet, 'properties.title', '');
+            if ($title !== '') {
+                $titles[] = $title;
+            }
+        }
+
+        return $titles;
+    }
+
+    private function addSheetsInBatch(string $accessToken, string $spreadsheetId, array $sheetTitles): void
+    {
+        $requests = [];
+        foreach ($sheetTitles as $sheetTitle) {
+            $requests[] = [
+                'addSheet' => [
+                    'properties' => [
+                        'title' => $sheetTitle,
+                    ],
+                ],
+            ];
+        }
+        if ($requests === []) {
+            return;
+        }
+
+        $addResponse = Http::withToken($accessToken)->post(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}:batchUpdate",
+            [
+                'requests' => $requests,
+            ]
+        );
+
+        if (! $addResponse->successful()) {
+            throw new \RuntimeException('Google Sheets addSheet failed: '.$addResponse->body());
+        }
+    }
+
+    private function batchClearSheets(string $accessToken, string $spreadsheetId, array $sheetTitles): void
+    {
+        if ($sheetTitles === []) {
+            return;
+        }
+        $ranges = array_map(fn ($title) => "{$title}!A:ZZ", $sheetTitles);
+        $clearResponse = Http::withToken($accessToken)->post(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values:batchClear",
+            [
+                'ranges' => $ranges,
+            ]
+        );
+
+        if (! $clearResponse->successful()) {
+            throw new \RuntimeException('Google Sheets batchClear failed: '.$clearResponse->body());
+        }
+    }
+
+    private function batchWriteSheets(
+        string $accessToken,
+        string $spreadsheetId,
+        array $documentSheets,
+        array $exchangeBlock
+    ): void
+    {
+        if ($documentSheets === []) {
+            return;
+        }
+        $data = [];
+        foreach ($documentSheets as $sheetTitle => $payload) {
+            $rows = [];
+            $blocks = (array) ($payload['blocks'] ?? []);
+            foreach ($blocks as $block) {
+                $blockHeader = $block['header'] ?? [];
+                $blockRows = $block['rows'] ?? [];
+                $rows = array_merge($rows, $exchangeBlock, [$blockHeader], $blockRows);
+                $rows[] = $this->buildTotalValueRow($blockHeader, $blockRows, (int) ($block['idx_desc'] ?? -1), (int) ($block['idx_qty'] ?? -1), (int) ($block['idx_value'] ?? -1));
+                $rows[] = [];
+            }
+            $data[] = [
+                'range' => "{$sheetTitle}!A1",
+                'majorDimension' => 'ROWS',
+                'values' => $rows,
+            ];
+        }
+        $writeResponse = Http::withToken($accessToken)->post(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values:batchUpdate",
+            [
+                'valueInputOption' => 'RAW',
+                'data' => $data,
+            ]
+        );
+
+        if (! $writeResponse->successful()) {
+            throw new \RuntimeException('Google Sheets batchUpdate failed: '.$writeResponse->body());
+        }
+    }
+
+    private function extractExchangeBlockFromSheet(array $values): array
+    {
+        $startIdx = -1;
+        for ($i = 0; $i < count($values); $i++) {
+            $row = $values[$i] ?? [];
+            if (! is_array($row) || $row === []) {
+                continue;
+            }
+            $firstCell = trim((string) ($row[0] ?? ''));
+            if (stripos($firstCell, 'Exchange Rate Information') !== false) {
+                $startIdx = $i;
+                break;
+            }
+        }
+
+        if ($startIdx < 0) {
+            return [];
+        }
+
+        $block = [];
+        for ($i = $startIdx; $i < count($values); $i++) {
+            $row = $values[$i] ?? [];
+            if (! is_array($row)) {
+                $row = [];
+            }
+            $block[] = $row;
+            $isBlank = true;
+            foreach ($row as $cell) {
+                if (trim((string) $cell) !== '') {
+                    $isBlank = false;
+                    break;
+                }
+            }
+            if ($i > $startIdx && $isBlank) {
+                break;
+            }
+        }
+        // Trim trailing blank rows so the exchange block sits directly above each header.
+        while ($block !== []) {
+            $last = $block[count($block) - 1];
+            $isBlank = true;
+            foreach ($last as $cell) {
+                if (trim((string) $cell) !== '') {
+                    $isBlank = false;
+                    break;
+                }
+            }
+            if (! $isBlank) {
+                break;
+            }
+            array_pop($block);
+        }
+
+        return $block;
+    }
+
+    private function buildExchangeBlock(array $exchangeInfo): array
+    {
+        $rows = [];
+        $asOf = (string) ($exchangeInfo['as_of'] ?? '');
+        $label = $asOf !== '' ? "Exchange Rate Information (as of {$asOf})" : 'Exchange Rate Information';
+        $rows[] = ['', $label, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        $rows[] = ['No', 'Currency', 'Rate to USD', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        $rateRows = (array) ($exchangeInfo['rows'] ?? []);
+        foreach ($rateRows as $idx => $rateRow) {
+            $rows[] = [(string) ($idx + 1), $rateRow[0] ?? '', $rateRow[1] ?? '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        }
+        $rows[] = [];
+
+        return $rows;
+    }
+
+    private function buildTotalValueRow(array $header, array $rows, int $idxDesc, int $idxQty, int $idxValue): array
+    {
+        $maxIdx = max($idxDesc, $idxQty, $idxValue, count($header) - 1, 0);
+        $out = array_fill(0, $maxIdx + 1, '');
+        if ($idxDesc >= 0) {
+            $out[$idxDesc] = 'Total Value';
+        }
+
+        $qtySum = 0.0;
+        $valueSum = 0.0;
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            if ($idxQty >= 0) {
+                $qtySum += (float) str_replace(',', '', (string) ($row[$idxQty] ?? 0));
+            }
+            if ($idxValue >= 0) {
+                $valueSum += (float) str_replace(',', '', (string) ($row[$idxValue] ?? 0));
+            }
+        }
+        if ($idxQty >= 0) {
+            $out[$idxQty] = number_format($qtySum, 4, '.', '');
+        }
+        if ($idxValue >= 0) {
+            $out[$idxValue] = number_format($valueSum, 4, '.', '');
+        }
+
+        return $out;
+    }
+
+    private function sanitizeSheetTitle(string $title): string
+    {
+        $clean = trim(preg_replace('/[\\[\\]\\/\\\\\\?\\*]/', '-', $title) ?? $title);
+        $clean = preg_replace('/\s+/', ' ', $clean) ?? $clean;
+        if ($clean === '') {
+            $clean = 'DOC-UNKNOWN';
+        }
+        if (mb_strlen($clean) > 100) {
+            $clean = mb_substr($clean, 0, 100);
+        }
+        return $clean;
+    }
+
+    private function computeDocumentDateFromLastImport(string $lastDateRaw): string
+    {
+        if (! preg_match('/(\d{2}\/\d{2}\/\d{4})/', $lastDateRaw, $m)) {
+            return '';
+        }
+
+        try {
+            $lastDate = Carbon::createFromFormat('d/m/Y', $m[1]);
+        } catch (\Throwable $_) {
+            return '';
+        }
+
+        $docDate = $lastDate->copy()->subMonthsNoOverflow(3)->addDay();
+        return $docDate->format('d/m/Y');
+    }
+
     private function fetchGoogleAccessToken(string $serviceAccountEmail, string $serviceAccountPrivateKey): string
     {
         $now = time();
@@ -840,6 +1401,7 @@ class PdfController extends Controller
                 fputcsv($stream, [
                     'No',
                     'Document No',
+                    'Document Date',
                     'Licence',
                     'Importer (Name & Address)',
                     'Registration No/Valid Date',
@@ -863,6 +1425,7 @@ class PdfController extends Controller
                     fputcsv($stream, [
                         $row['no'],
                         $this->stripMyanmarText($metadata['document_no']),
+                        $this->stripMyanmarText($metadata['document_date']),
                         $this->stripMyanmarText($metadata['licence']),
                         $this->stripMyanmarText($metadata['importer']),
                         $this->stripMyanmarText($metadata['registration_valid_date']),
@@ -883,6 +1446,8 @@ class PdfController extends Controller
                     ]);
                 }
                 fputcsv($stream, [
+                    '',
+                    '',
                     '',
                     '',
                     '',
@@ -1060,6 +1625,7 @@ class PdfController extends Controller
         $normalizedText = str_replace(["\r\n", "\r"], "\n", $text);
         $metadata = [
             'document_no' => '',
+            'document_date' => '',
             'importer' => '',
             'registration_valid_date' => '',
             'consignor' => '',
@@ -1073,8 +1639,9 @@ class PdfController extends Controller
             'total_cif_kyats' => '',
         ];
 
-        if (preg_match('/Licence\s*No\.?\s*([A-Z0-9-]+)/i', $normalizedText, $m)) {
+        if (preg_match('/Licence\s*No\.?\s*([A-Z0-9-]+)(?:\s*\((\d{2}\/\d{2}\/\d{4})\))?/i', $normalizedText, $m)) {
             $metadata['licence'] = $m[1];
+            $metadata['document_date'] = $m[2] ?? '';
         }
 
         if (preg_match('/\b([A-Z]+(?:OBIL)?-\d+-\d+-\d{4})\b/i', $normalizedText, $m)) {
