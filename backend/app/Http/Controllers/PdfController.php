@@ -207,10 +207,22 @@ class PdfController extends Controller
             if ($operationMode === 'update' && in_array($documentType, ['OIL', 'YGN'], true)) {
                 $usageUpdate = $this->extractOilUsageUpdateRows($text);
                 if ($usageUpdate['license_no'] !== '' && $usageUpdate['rows'] !== []) {
+                    $metadata = $this->extractDocumentMetadata($text);
+                    $targetSheetName = $this->resolveDocumentDateSheetName($metadata, $sheetName);
+                    if ($targetSheetName !== $sheetName) {
+                        $existingSheets = $this->fetchSheetTitles($accessToken, $spreadsheetId);
+                        if (! in_array($targetSheetName, $existingSheets, true)) {
+                            return [
+                                'status' => 'error',
+                                'message' => "Sheet tab for document date ({$targetSheetName}) not found. Insert data first.",
+                                'spreadsheet_url' => $spreadsheetUrl,
+                            ];
+                        }
+                    }
                     $updatedCount = $this->applyOilUsageUpdateToGoogleSheet(
                         $accessToken,
                         $spreadsheetId,
-                        $sheetName,
+                        $targetSheetName,
                         $usageUpdate['license_no'],
                         $usageUpdate['rows']
                     );
@@ -234,8 +246,29 @@ class PdfController extends Controller
                 }
 
                 $metadata = $this->extractDocumentMetadata($text);
+                $targetSheetName = $this->resolveDocumentDateSheetName($metadata, $sheetName);
+                if ($targetSheetName !== $sheetName) {
+                    $existingSheets = $this->fetchSheetTitles($accessToken, $spreadsheetId);
+                    if (! in_array($targetSheetName, $existingSheets, true)) {
+                        $renamed = $this->renameSingleEmptySheetIfNeeded(
+                            $accessToken,
+                            $spreadsheetId,
+                            $targetSheetName
+                        );
+                        if ($operationMode === 'update') {
+                            return [
+                                'status' => 'error',
+                                'message' => "Sheet tab for document date ({$targetSheetName}) not found. Insert data first.",
+                                'spreadsheet_url' => $spreadsheetUrl,
+                            ];
+                        }
+                        if (! $renamed) {
+                            $this->addSheetsInBatch($accessToken, $spreadsheetId, [$targetSheetName]);
+                        }
+                    }
+                }
                 $exchangeInfo = $this->fetchExchangeRatesToUsdRows();
-                $sheetAppendRange = rawurlencode($sheetName.'!A:S');
+                $sheetAppendRange = rawurlencode($targetSheetName.'!A:S');
                 $values = [];
                 if ($operationMode === 'insert' && (!($exchangeInfo['ok'] ?? false) || $exchangeInfo['rows'] === [])) {
                     throw new \RuntimeException('Exchange rate API is unavailable. Please try again.');
@@ -341,7 +374,7 @@ class PdfController extends Controller
                 $response = $this->writeRowsToGoogleSheet(
                     $accessToken,
                     $spreadsheetId,
-                    $sheetName,
+                    $targetSheetName,
                     $values,
                     $operationMode,
                     $sheetAppendRange
@@ -528,58 +561,79 @@ class PdfController extends Controller
             throw new \RuntimeException('Google Sheets is empty. Insert data first before update.');
         }
 
-        $headerRowIdx = $this->findOilHeaderRowIndex($values);
-        if ($headerRowIdx < 0) {
+        $headerRows = $this->findOilHeaderRowIndexes($values);
+        if ($headerRows === []) {
             throw new \RuntimeException('OIL table header row not found in Google Sheet.');
         }
 
-        $header = $values[$headerRowIdx] ?? [];
-        $idxLicence = $this->findHeaderIndex($header, ['licence', 'license']);
-        $idxHscode = $this->findHeaderIndex($header, ['hscode', 'hs code']);
-        $idxDescription = $this->findHeaderIndex($header, ['descriptionofgoods', 'description']);
-        $idxValueUsd = $this->findHeaderIndex($header, ['valueusd', 'value(usd)']);
-
-        if ($idxLicence < 0 || $idxDescription < 0 || $idxValueUsd < 0) {
-            throw new \RuntimeException('Required columns (Licence, Description of Goods, Value(USD)) are missing.');
-        }
-
-        $idxUsedQty = $this->findHeaderIndex($header, ['usedquantity', 'used total quantity']);
-        $idxBalanceQty = $this->findHeaderIndex($header, ['balancequantity', 'balance quantity']);
+        $headerRows[] = count($values);
+        $usageCandidates = array_values($usageRows);
+        $updatedCount = 0;
         $columnsAdded = false;
 
-        if ($idxUsedQty < 0 || $idxBalanceQty < 0) {
-            $idxUsedQty = $idxValueUsd + 1;
-            $idxBalanceQty = $idxValueUsd + 2;
-            $header = $this->setCell($header, $idxUsedQty, 'Used Quantity');
-            $header = $this->setCell($header, $idxBalanceQty, 'Balance Quantity');
-            $values[$headerRowIdx] = $header;
-            $columnsAdded = true;
-        }
-
-        $usageCandidates = array_values($usageRows);
-
-        $updatedCount = 0;
-        for ($r = $headerRowIdx + 1; $r < count($values); $r++) {
-            $row = $values[$r] ?? [];
-
-            $rowLicence = trim((string) ($row[$idxLicence] ?? ''));
-            if (strcasecmp($rowLicence, $licenseNo) !== 0) {
+        for ($h = 0; $h < count($headerRows) - 1; $h++) {
+            $headerRowIdx = $headerRows[$h];
+            $blockEnd = $headerRows[$h + 1] - 1;
+            if ($blockEnd <= $headerRowIdx) {
                 continue;
             }
 
-            $rowHscode = trim((string) ($row[$idxHscode] ?? ''));
-            $rowDesc = trim((string) ($row[$idxDescription] ?? ''));
-            $matched = $this->findBestUsageMatch($usageCandidates, $rowHscode, $rowDesc);
-            if ($matched === null) {
+            $header = $values[$headerRowIdx] ?? [];
+            if (! is_array($header)) {
+                $header = [];
+            }
+            $idxLicence = $this->findHeaderIndex($header, ['licence', 'license']);
+            $idxHscode = $this->findHeaderIndex($header, ['hscode', 'hs code']);
+            $idxDescription = $this->findHeaderIndex($header, ['descriptionofgoods', 'description']);
+            $idxValueUsd = $this->findHeaderIndex($header, ['valueusd', 'value(usd)']);
+
+            if ($idxLicence < 0 || $idxDescription < 0 || $idxValueUsd < 0) {
                 continue;
             }
 
-            $existingUsed = (string) ($row[$idxUsedQty] ?? '');
-            $nextUsed = $this->sumQuantities($existingUsed, (string) ($matched['used_quantity'] ?? ''));
-            $row = $this->setCell($row, $idxUsedQty, $nextUsed);
-            $row = $this->setCell($row, $idxBalanceQty, (string) ($matched['balance_quantity'] ?? ''));
-            $values[$r] = $row;
-            $updatedCount++;
+            $idxUsedQty = $this->findHeaderIndex($header, ['usedquantity', 'used total quantity']);
+            $idxBalanceQty = $this->findHeaderIndex($header, ['balancequantity', 'balance quantity']);
+            if ($idxUsedQty < 0 || $idxBalanceQty < 0) {
+                $insertAt = $idxValueUsd + 1;
+                for ($r = $headerRowIdx; $r <= $blockEnd; $r++) {
+                    $row = $values[$r] ?? [];
+                    if (! is_array($row)) {
+                        $row = [];
+                    }
+                    array_splice($row, $insertAt, 0, $r === $headerRowIdx ? 'Used Quantity' : '');
+                    array_splice($row, $insertAt + 1, 0, $r === $headerRowIdx ? 'Balance Quantity' : '');
+                    $values[$r] = $row;
+                }
+                $idxUsedQty = $insertAt;
+                $idxBalanceQty = $insertAt + 1;
+                $columnsAdded = true;
+            }
+
+            for ($r = $headerRowIdx + 1; $r <= $blockEnd; $r++) {
+                $row = $values[$r] ?? [];
+                if (! is_array($row)) {
+                    $row = [];
+                }
+
+                $rowLicence = trim((string) ($row[$idxLicence] ?? ''));
+                if (strcasecmp($rowLicence, $licenseNo) !== 0) {
+                    continue;
+                }
+
+                $rowHscode = trim((string) ($row[$idxHscode] ?? ''));
+                $rowDesc = trim((string) ($row[$idxDescription] ?? ''));
+                $matched = $this->findBestUsageMatch($usageCandidates, $rowHscode, $rowDesc);
+                if ($matched === null) {
+                    continue;
+                }
+
+                $existingUsed = (string) ($row[$idxUsedQty] ?? '');
+                $nextUsed = $this->sumQuantities($existingUsed, (string) ($matched['used_quantity'] ?? ''));
+                $row = $this->setCell($row, $idxUsedQty, $nextUsed);
+                $row = $this->setCell($row, $idxBalanceQty, (string) ($matched['balance_quantity'] ?? ''));
+                $values[$r] = $row;
+                $updatedCount++;
+            }
         }
 
         $tableValues = $values;
@@ -618,6 +672,24 @@ class PdfController extends Controller
         }
 
         return -1;
+    }
+
+    private function findOilHeaderRowIndexes(array $values): array
+    {
+        $rows = [];
+        foreach ($values as $i => $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $idxDoc = $this->findHeaderIndex($row, ['documentno']);
+            $idxDesc = $this->findHeaderIndex($row, ['descriptionofgoods', 'description']);
+            $idxValue = $this->findHeaderIndex($row, ['valueusd', 'value(usd)']);
+            if ($idxDoc >= 0 && $idxDesc >= 0 && $idxValue >= 0) {
+                $rows[] = (int) $i;
+            }
+        }
+
+        return $rows;
     }
 
     private function findHeaderIndex(array $row, array $candidates): int
@@ -879,9 +951,16 @@ class PdfController extends Controller
             $idxDocNo = $this->findHeaderIndexLoose($header, ['documentno', 'docno', 'document no']);
             $idxDocDate = $this->findHeaderIndexLoose($header, ['documentdate', 'docdate']);
             $idxLastDate = $this->findHeaderIndexLoose($header, ['lastdateofimport', 'last date of import']);
+            $idxValueUsd = $this->findHeaderIndex($header, ['valueusd', 'value(usd)']);
 
             if ($idxDocNo < 0) {
                 continue;
+            }
+
+            if ($idxValueUsd >= 0) {
+                $header = $this->setCell($header, $idxValueUsd + 1, 'Used Quantity');
+                $header = $this->setCell($header, $idxValueUsd + 2, 'Balance Quantity');
+                $values[$headerRowIdx] = $header;
             }
 
             $needsInsert = $idxDocDate < 0 || $idxDocDate !== ($idxDocNo + 1);
@@ -1056,13 +1135,7 @@ class PdfController extends Controller
 
     private function fetchSheetTitles(string $accessToken, string $spreadsheetId): array
     {
-        $response = Http::withToken($accessToken)->get(
-            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}?fields=sheets.properties"
-        );
-        if (! $response->successful()) {
-            throw new \RuntimeException('Google Sheets metadata read failed: '.$response->body());
-        }
-        $sheets = (array) $response->json('sheets', []);
+        $sheets = $this->fetchSheetMetadata($accessToken, $spreadsheetId);
         $titles = [];
         foreach ($sheets as $sheet) {
             $title = (string) data_get($sheet, 'properties.title', '');
@@ -1072,6 +1145,71 @@ class PdfController extends Controller
         }
 
         return $titles;
+    }
+
+    private function fetchSheetMetadata(string $accessToken, string $spreadsheetId): array
+    {
+        $response = Http::withToken($accessToken)->get(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}?fields=sheets.properties"
+        );
+        if (! $response->successful()) {
+            throw new \RuntimeException('Google Sheets metadata read failed: '.$response->body());
+        }
+
+        return (array) $response->json('sheets', []);
+    }
+
+    private function renameSingleEmptySheetIfNeeded(
+        string $accessToken,
+        string $spreadsheetId,
+        string $targetSheetName
+    ): bool {
+        $sheets = $this->fetchSheetMetadata($accessToken, $spreadsheetId);
+        if (count($sheets) !== 1) {
+            return false;
+        }
+
+        $onlySheet = $sheets[0] ?? [];
+        $onlyTitle = (string) data_get($onlySheet, 'properties.title', '');
+        $onlyId = (int) data_get($onlySheet, 'properties.sheetId', 0);
+        if ($onlyTitle === '' || $onlyId === 0 || $onlyTitle === $targetSheetName) {
+            return false;
+        }
+
+        $range = rawurlencode($onlyTitle.'!A1:Z');
+        $valuesResponse = Http::withToken($accessToken)->get(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}/values/{$range}"
+        );
+        if (! $valuesResponse->successful()) {
+            throw new \RuntimeException('Google Sheets values read failed: '.$valuesResponse->body());
+        }
+        $values = $valuesResponse->json('values', []);
+        if (is_array($values) && $values !== []) {
+            return false;
+        }
+
+        $renameResponse = Http::withToken($accessToken)->post(
+            "https://sheets.googleapis.com/v4/spreadsheets/{$spreadsheetId}:batchUpdate",
+            [
+                'requests' => [
+                    [
+                        'updateSheetProperties' => [
+                            'properties' => [
+                                'sheetId' => $onlyId,
+                                'title' => $targetSheetName,
+                            ],
+                            'fields' => 'title',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        if (! $renameResponse->successful()) {
+            throw new \RuntimeException('Google Sheets renameSheet failed: '.$renameResponse->body());
+        }
+
+        return true;
     }
 
     private function addSheetsInBatch(string $accessToken, string $spreadsheetId, array $sheetTitles): void
@@ -1274,6 +1412,32 @@ class PdfController extends Controller
             $clean = mb_substr($clean, 0, 100);
         }
         return $clean;
+    }
+
+    private function resolveDocumentDateSheetName(array $metadata, string $fallback): string
+    {
+        $docDate = trim((string) ($metadata['document_date'] ?? ''));
+        if ($docDate === '' && ! empty($metadata['start_valid_date'])) {
+            $docDate = $this->normalizeDateToDmy((string) $metadata['start_valid_date']);
+        }
+        if ($docDate === '') {
+            $docDate = $this->computeDocumentDateFromLastImport((string) ($metadata['last_date_of_import'] ?? ''));
+        }
+        if ($docDate === '') {
+            return $fallback;
+        }
+
+        return $this->sanitizeSheetTitle($docDate);
+    }
+
+    private function normalizeDateToDmy(string $value): string
+    {
+        $value = trim($value);
+        if (preg_match('/^(\d{4})\/(\d{2})\/(\d{2})$/', $value, $m)) {
+            return "{$m[3]}/{$m[2]}/{$m[1]}";
+        }
+
+        return $value;
     }
 
     private function computeDocumentDateFromLastImport(string $lastDateRaw): string
@@ -1637,6 +1801,8 @@ class PdfController extends Controller
             'country_of_origin' => '',
             'method_of_import' => '',
             'total_cif_kyats' => '',
+            'start_valid_date' => '',
+            'last_valid_date' => '',
         ];
 
         if (preg_match('/Licence\s*No\.?\s*([A-Z0-9-]+)(?:\s*\((\d{2}\/\d{2}\/\d{4})\))?/i', $normalizedText, $m)) {
@@ -1673,6 +1839,14 @@ class PdfController extends Controller
             if (preg_match('/(\d{2}\/\d{2}\/\d{4})\s+(.+)/', trim($m[1]), $parts)) {
                 $metadata['last_date_of_import'] = $parts[1];
                 $metadata['country_whence_consigned'] = trim($parts[2]);
+            }
+        }
+
+        if (preg_match('/Start\s+valid\s+date\s+(\d{4}\/\d{2}\/\d{2})\s+Last\s+valid\s+date\s+(\d{4}\/\d{2}\/\d{2})/i', $normalizedText, $m)) {
+            $metadata['start_valid_date'] = $m[1];
+            $metadata['last_valid_date'] = $m[2];
+            if ($metadata['document_date'] === '') {
+                $metadata['document_date'] = $this->normalizeDateToDmy($m[1]);
             }
         }
 
