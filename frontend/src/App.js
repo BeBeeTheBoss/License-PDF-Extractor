@@ -57,6 +57,7 @@ function App() {
   const [fixError, setFixError] = useState("");
   const [fixSheetsUrl, setFixSheetsUrl] = useState("");
   const [fixDebug, setFixDebug] = useState(null);
+  const [fixStatus, setFixStatus] = useState(null);
   const insertFileInputRef = useRef(null);
   const updateFileInputRef = useRef(null);
 
@@ -113,6 +114,7 @@ function App() {
     setFixError("");
     setFixSheetsUrl("");
     setFixDebug(null);
+    setFixStatus(null);
     if (insertFileInputRef.current) {
       insertFileInputRef.current.value = "";
     }
@@ -147,13 +149,14 @@ function App() {
       });
 
       const payload = await response.json().catch(() => ({}));
+      setFixStatus({ ok: response.ok, status: response.status });
+      setFixDebug(payload?.debug || null);
       if (!response.ok) {
         throw new Error(payload?.message || "Fix failed.");
       }
 
       setFixMessage(payload?.message || "Document dates fixed.");
       setFixSheetsUrl(payload?.spreadsheet_url || "");
-      setFixDebug(payload?.debug || null);
     } catch (error) {
       if ((error.message || "").toLowerCase().includes("unauthorized")) {
         localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -162,6 +165,7 @@ function App() {
         setAuthEmail("");
       }
       setFixError(error.message || "Fix failed.");
+      setFixDebug((prev) => prev || { error: error.message || "Fix failed." });
     } finally {
       setFixing(false);
     }
@@ -413,7 +417,7 @@ function App() {
             {loading ? (isUpdate ? "Updating..." : "Inserting...") : isUpdate ? "Update Sheet" : "Insert Data"}
           </button>
         </div>
-        {/* {isUpdate && (
+        {isUpdate && (
           <div className="fix-panel">
             <div>
               <p className="fix-title">Fix older table</p>
@@ -425,7 +429,7 @@ function App() {
               {fixing ? "Fixing..." : "Fix Document Dates"}
             </button>
           </div>
-        )} */}
+        )}
         {fieldErrors.file && <p className="input-error">{fieldErrors.file}</p>}
         {submitError && <p className="input-error">{submitError}</p>}
         {fixError && <p className="input-error">{fixError}</p>}
@@ -435,8 +439,10 @@ function App() {
             Open Google Sheet
           </a>
         )}
-        {fixDebug && (
-          <pre className="debug-box">{JSON.stringify(fixDebug, null, 2)}</pre>
+        {(fixDebug || fixStatus) && (
+          <pre className="debug-box">
+            {JSON.stringify({ status: fixStatus, debug: fixDebug }, null, 2)}
+          </pre>
         )}
 
         <p className="file-name">{file ? `Selected: ${file.name}` : "No file selected."}</p>

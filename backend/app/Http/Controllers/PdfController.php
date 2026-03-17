@@ -150,6 +150,9 @@ class PdfController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'debug' => [
+                    'exception' => $e->getMessage(),
+                ],
                 'spreadsheet_url' => $spreadsheetUrl,
             ], 422);
         }
@@ -1010,10 +1013,16 @@ class PdfController extends Controller
         }
 
         if ($updatedRows === 0 && ! $columnAdded) {
+            $splitResult = $this->splitSheetByDocumentDate($accessToken, $spreadsheetId, $values, $headerRows);
             return [
                 'updated_rows' => 0,
                 'column_added' => false,
                 'message' => 'No rows needed updates.',
+                'debug' => [
+                    'header_rows' => $headerRows,
+                    'header_samples' => $debugHeaders,
+                    'split' => $splitResult,
+                ],
             ];
         }
 
@@ -1032,6 +1041,11 @@ class PdfController extends Controller
         }
 
         $splitResult = $this->splitSheetByDocumentDate($accessToken, $spreadsheetId, $values, $headerRows);
+        Log::info('Split-by-month result', [
+            'spreadsheet_id' => $spreadsheetId,
+            'sheets_created' => $splitResult['sheets_created'] ?? null,
+            'documents' => $splitResult['documents'] ?? null,
+        ]);
         $message = $columnAdded
             ? "Document Date column added, {$updatedRows} row(s) updated, {$splitResult['sheets_created']} sheet(s) updated by Document Date."
             : "{$updatedRows} row(s) updated, {$splitResult['sheets_created']} sheet(s) updated by Document Date.";
@@ -1055,6 +1069,9 @@ class PdfController extends Controller
         array $headerRows
     ): array {
         $documentSheets = [];
+        $skippedRows = 0;
+        $skippedSamples = [];
+        $processedRows = 0;
         $headerRows = array_values(array_unique($headerRows));
         sort($headerRows);
         $headerRows[] = count($values);
@@ -1088,10 +1105,21 @@ class PdfController extends Controller
                 if ($docDate === '' && $idxLastDate >= 0) {
                     $docDate = $this->computeDocumentDateFromLastImport((string) ($row[$idxLastDate] ?? ''));
                 }
-                if ($docDate === '') {
+                $monthKey = $this->dateToMonthKey($docDate);
+                if ($monthKey === '') {
+                    $skippedRows++;
+                    if (count($skippedSamples) < 5) {
+                        $skippedSamples[] = [
+                            'row_index' => $r + 1,
+                            'document_date' => $docDate,
+                            'doc_date_col' => $idxDocDate,
+                            'last_date_col' => $idxLastDate,
+                        ];
+                    }
                     continue;
                 }
-                $sheetTitle = $this->sanitizeSheetTitle($docDate);
+                $sheetTitle = $this->sanitizeSheetTitle($monthKey);
+                $processedRows++;
                 $docNo = $idxDocNo >= 0 ? trim((string) ($row[$idxDocNo] ?? '')) : '';
                 $blockKey = $docNo !== '' ? $docNo : 'DOC-UNKNOWN';
                 if (! isset($documentSheets[$sheetTitle])) {
@@ -1130,6 +1158,9 @@ class PdfController extends Controller
         return [
             'sheets_created' => $sheetsCreated,
             'documents' => array_keys($documentSheets),
+            'processed_rows' => $processedRows,
+            'skipped_rows' => $skippedRows,
+            'skipped_samples' => $skippedSamples,
         ];
     }
 
@@ -1416,18 +1447,12 @@ class PdfController extends Controller
 
     private function resolveDocumentDateSheetName(array $metadata, string $fallback): string
     {
-        $docDate = trim((string) ($metadata['document_date'] ?? ''));
-        if ($docDate === '' && ! empty($metadata['start_valid_date'])) {
-            $docDate = $this->normalizeDateToDmy((string) $metadata['start_valid_date']);
-        }
-        if ($docDate === '') {
-            $docDate = $this->computeDocumentDateFromLastImport((string) ($metadata['last_date_of_import'] ?? ''));
-        }
-        if ($docDate === '') {
+        $monthKey = $this->resolveDocumentMonthKey($metadata);
+        if ($monthKey === '') {
             return $fallback;
         }
 
-        return $this->sanitizeSheetTitle($docDate);
+        return $this->sanitizeSheetTitle($monthKey);
     }
 
     private function normalizeDateToDmy(string $value): string
@@ -1438,6 +1463,36 @@ class PdfController extends Controller
         }
 
         return $value;
+    }
+
+    private function resolveDocumentMonthKey(array $metadata): string
+    {
+        $docDate = trim((string) ($metadata['document_date'] ?? ''));
+        if ($docDate === '' && ! empty($metadata['start_valid_date'])) {
+            $docDate = $this->normalizeDateToDmy((string) $metadata['start_valid_date']);
+        }
+        if ($docDate === '') {
+            $docDate = $this->computeDocumentDateFromLastImport((string) ($metadata['last_date_of_import'] ?? ''));
+        }
+        return $this->dateToMonthKey($docDate);
+    }
+
+    private function dateToMonthKey(string $date): string
+    {
+        $date = trim($date);
+        if ($date === '') {
+            return '';
+        }
+        // Accept dd/mm/yyyy
+        if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $date, $m)) {
+            return "{$m[3]}-{$m[2]}";
+        }
+        // Accept yyyy/mm/dd
+        if (preg_match('/^(\d{4})\/(\d{2})\/(\d{2})$/', $date, $m)) {
+            return "{$m[1]}-{$m[2]}";
+        }
+
+        return '';
     }
 
     private function computeDocumentDateFromLastImport(string $lastDateRaw): string
