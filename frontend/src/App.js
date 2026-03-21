@@ -417,7 +417,7 @@ function App() {
             {loading ? (isUpdate ? "Updating..." : "Inserting...") : isUpdate ? "Update Sheet" : "Insert Data"}
           </button>
         </div>
-        {isUpdate && (
+        {/* {isUpdate && (
           <div className="fix-panel">
             <div>
               <p className="fix-title">Fix older table</p>
@@ -429,7 +429,7 @@ function App() {
               {fixing ? "Fixing..." : "Fix Document Dates"}
             </button>
           </div>
-        )}
+        )} */}
         {fieldErrors.file && <p className="input-error">{fieldErrors.file}</p>}
         {submitError && <p className="input-error">{submitError}</p>}
         {fixError && <p className="input-error">{fixError}</p>}
