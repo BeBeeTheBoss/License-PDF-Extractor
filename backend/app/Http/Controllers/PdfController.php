@@ -761,6 +761,7 @@ class PdfController extends Controller
 
         $best = null;
         $bestScore = -1;
+        $bestLengthDiff = PHP_INT_MAX;
 
         foreach ($usageRows as $candidate) {
             $candHs = preg_replace('/[^0-9]/', '', (string) ($candidate['hscode'] ?? '')) ?? '';
@@ -782,9 +783,15 @@ class PdfController extends Controller
                 $score += 2;
             }
 
-            if ($score > $bestScore) {
+            $lengthDiff = abs(strlen($rowDescNorm) - strlen($candDesc));
+
+            if (
+                $score > $bestScore
+                || ($score === $bestScore && $lengthDiff < $bestLengthDiff)
+            ) {
                 $best = $candidate;
                 $bestScore = $score;
+                $bestLengthDiff = $lengthDiff;
             }
         }
 
@@ -1725,8 +1732,9 @@ class PdfController extends Controller
         $rows = [];
         $current = null;
         $inDescription = false;
+        $appendToDescription = false;
 
-        $flushCurrent = function () use (&$current, &$rows, &$inDescription): void {
+        $flushCurrent = function () use (&$current, &$rows, &$inDescription, &$appendToDescription): void {
             if ($current !== null) {
                 $hasRequired = $current['no'] !== ''
                     && $current['hscode'] !== ''
@@ -1743,6 +1751,7 @@ class PdfController extends Controller
 
             $current = null;
             $inDescription = false;
+            $appendToDescription = false;
         };
 
         foreach ($lines as $lineRaw) {
@@ -1783,7 +1792,8 @@ class PdfController extends Controller
                     'quantity' => str_replace(',', '', $m[6]),
                     'value_usd' => str_replace(',', '', $m[7]),
                 ];
-                $flushCurrent();
+                // Allow trailing Material/Brand lines to be appended to description.
+                $appendToDescription = true;
                 continue;
             }
 
@@ -1829,7 +1839,7 @@ class PdfController extends Controller
                 continue;
             }
 
-            if ($inDescription || $current['description'] === '') {
+            if ($inDescription || $appendToDescription) {
                 $current['description'] .= ($current['description'] === '' ? '' : ' ').$line;
             }
         }
