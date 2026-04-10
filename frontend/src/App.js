@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import Lottie from "lottie-react";
 import beeLoungingAnimation from "./Animation/Bee - lounging.json";
+import DataEntryView from "./DataEntryView";
 import "./App.css";
 
 const API_BASE_URL = (
@@ -94,6 +96,7 @@ function App() {
 
     verifyAuth();
   }, [authToken]);
+
 
   const resetUiState = () => {
     setDocumentType("");
@@ -546,6 +549,7 @@ function App() {
       setAuthToken("");
       setIsAuthenticated(false);
       setAuthEmail("");
+      setActiveView("extractor");
       resetUiState();
     }
   };
@@ -603,11 +607,10 @@ function App() {
     );
   }
 
-  return (
-    <main className="app-shell">
+  const AuthenticatedShell = ({ shellClassName = "", children }) => (
+    <main className={`app-shell${shellClassName ? ` ${shellClassName}` : ""}`}>
       <div className="bg-blob blob-a" aria-hidden="true" />
       <div className="bg-blob blob-b" aria-hidden="true" />
-
       <div className="card-stack">
         <div className="auth-meta">
           <span className="auth-user">{authEmail}</span>
@@ -615,6 +618,16 @@ function App() {
             Logout
           </button>
         </div>
+        {children}
+      </div>
+    </main>
+  );
+
+  const ExtractorPage = () => {
+    const navigate = useNavigate();
+
+    return (
+      <>
         <div className="mode-toggle" role="group" aria-label="Operation mode">
           <button
             type="button"
@@ -639,18 +652,71 @@ function App() {
             Update
           </button>
         </div>
-        <div className="card-flip card-slider" data-mode={operationMode}>
+        <div className="card-flip" data-mode={operationMode}>
           <div className={`card-track ${operationMode === "update" ? "to-update" : "to-insert"}`}>
-            <section className="glass-card card-face card-slide insert-card">
+            <section className="glass-card card-face card-slide">
               <div className="card-content">{renderCardFace("insert", insertFileInputRef)}</div>
             </section>
-            <section className="glass-card card-face card-slide update-card">
+            <section className="glass-card card-face card-slide">
               <div className="card-content">{renderCardFace("update", updateFileInputRef)}</div>
             </section>
           </div>
         </div>
-      </div>
-    </main>
+        <div className="page-link-row">
+          <button type="button" className="nav-link-btn" onClick={() => navigate("/data-entry")}>
+            <span className="btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M4 5h16" />
+                <path d="M4 12h16" />
+                <path d="M4 19h16" />
+                <path d="M9 5v14" />
+              </svg>
+            </span>
+            Go to Shipment Table
+          </button>
+        </div>
+      </>
+    );
+  };
+
+  const DataEntryPage = () => {
+    const navigate = useNavigate();
+
+    return (
+      <DataEntryView
+        apiBaseUrl={API_BASE_URL}
+        authToken={authToken}
+        onUnauthorized={() => {
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          setAuthToken("");
+          setIsAuthenticated(false);
+          setAuthEmail("");
+        }}
+        onBack={() => navigate("/")}
+      />
+    );
+  };
+
+  return (
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <AuthenticatedShell>
+            <ExtractorPage />
+          </AuthenticatedShell>
+        }
+      />
+      <Route
+        path="/data-entry"
+        element={
+          <AuthenticatedShell shellClassName="data-entry-shell">
+            <DataEntryPage />
+          </AuthenticatedShell>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 
