@@ -32,6 +32,7 @@ const withTokenInUrl = (url, token) => {
 };
 
 function App() {
+  const navigate = useNavigate();
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_KEY) || "");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
@@ -549,7 +550,6 @@ function App() {
       setAuthToken("");
       setIsAuthenticated(false);
       setAuthEmail("");
-      setActiveView("extractor");
       resetUiState();
     }
   };
@@ -607,25 +607,7 @@ function App() {
     );
   }
 
-  const AuthenticatedShell = ({ shellClassName = "", children }) => (
-    <main className={`app-shell${shellClassName ? ` ${shellClassName}` : ""}`}>
-      <div className="bg-blob blob-a" aria-hidden="true" />
-      <div className="bg-blob blob-b" aria-hidden="true" />
-      <div className="card-stack">
-        <div className="auth-meta">
-          <span className="auth-user">{authEmail}</span>
-          <button type="button" className="logout-btn" onClick={handleLogout}>
-            Logout
-          </button>
-        </div>
-        {children}
-      </div>
-    </main>
-  );
-
-  const ExtractorPage = () => {
-    const navigate = useNavigate();
-
+  const renderExtractorPage = () => {
     return (
       <>
         <div className="mode-toggle" role="group" aria-label="Operation mode">
@@ -679,9 +661,7 @@ function App() {
     );
   };
 
-  const DataEntryPage = () => {
-    const navigate = useNavigate();
-
+  const renderDataEntryPage = () => {
     return (
       <DataEntryView
         apiBaseUrl={API_BASE_URL}
@@ -702,17 +682,37 @@ function App() {
       <Route
         path="/"
         element={
-          <AuthenticatedShell>
-            <ExtractorPage />
-          </AuthenticatedShell>
+          <main className="app-shell">
+            <div className="bg-blob blob-a" aria-hidden="true" />
+            <div className="bg-blob blob-b" aria-hidden="true" />
+            <div className="card-stack">
+              <div className="auth-meta">
+                <span className="auth-user">{authEmail}</span>
+                <button type="button" className="logout-btn" onClick={handleLogout}>
+                  Logout
+                </button>
+              </div>
+              {renderExtractorPage()}
+            </div>
+          </main>
         }
       />
       <Route
         path="/data-entry"
         element={
-          <AuthenticatedShell shellClassName="data-entry-shell">
-            <DataEntryPage />
-          </AuthenticatedShell>
+          <main className="app-shell data-entry-shell">
+            <div className="bg-blob blob-a" aria-hidden="true" />
+            <div className="bg-blob blob-b" aria-hidden="true" />
+            <div className="card-stack">
+              <div className="auth-meta">
+                <span className="auth-user">{authEmail}</span>
+                <button type="button" className="logout-btn" onClick={handleLogout}>
+                  Logout
+                </button>
+              </div>
+              {renderDataEntryPage()}
+            </div>
+          </main>
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />
