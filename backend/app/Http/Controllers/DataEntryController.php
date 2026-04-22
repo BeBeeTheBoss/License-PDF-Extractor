@@ -9,19 +9,19 @@ class DataEntryController extends Controller
 {
     public function index(Request $request)
     {
-        $limit = (int) $request->query('limit', 50);
-        if ($limit < 1) {
-            $limit = 1;
-        }
-        if ($limit > 200) {
-            $limit = 200;
+        $query = DataEntry::query()
+            ->orderBy('sort_order')
+            ->orderBy('id');
+
+        $limit = (int) $request->query('limit', 0);
+        if ($limit > 0) {
+            if ($limit > 2000) {
+                $limit = 2000;
+            }
+            $query->limit($limit);
         }
 
-        $entries = DataEntry::query()
-            ->orderBy('sort_order')
-            ->orderBy('id')
-            ->limit($limit)
-            ->get();
+        $entries = $query->get();
 
         return response()->json([
             'data' => $entries,

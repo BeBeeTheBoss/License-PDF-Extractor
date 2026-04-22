@@ -85,7 +85,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
     setEntriesLoading(true);
     setEntriesError("");
     try {
-      const response = await fetch(`${apiBaseUrl}/api/data-entries?limit=80`, { headers });
+      const response = await fetch(`${apiBaseUrl}/api/data-entries`, { headers });
       const payload = await response.json().catch(() => ({}));
       if (response.status === 401) {
         onUnauthorized?.();
