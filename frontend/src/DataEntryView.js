@@ -2,7 +2,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
 
-const ENTRY_TYPES = ["CT", "DAP", "Other"];
+const ENTRY_TYPES = [
+  "Steel",
+  "Roofing/Ceiling/Wall",
+  "Sanitary Ware",
+  "Garden And Accessories",
+  "Hardware And Tools",
+  "Surface Covering",
+  "Door, Windows And Wood",
+  "Electrical And Accessories",
+  "Home Appliance",
+  "Paint And Chemical",
+  "Houseware And Kitchen",
+  "Furniture And Bedding",
+  "Stationery & Digital Equipment",
+  "CT",
+  "DAP",
+  "Other",
+];
 const FILE_STATUSES = ["Arrive Port", "Run", "Finished"];
 
 const emptyRow = {
@@ -197,6 +214,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
       if (!row.entry_type) rowErr.entry_type = "Required";
       if (!row.bl_no) rowErr.bl_no = "Required";
       if (!row.product_name) rowErr.product_name = "Required";
+      if (!row.etd) rowErr.etd = "Required";
       if (!row.file_status) rowErr.file_status = "Required";
       if (!row.pi_no) rowErr.pi_no = "Required";
       if (
@@ -230,6 +248,9 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
     requireIfMissing("entry_type");
     requireIfMissing("bl_no");
     requireIfMissing("product_name");
+    if (!row.etd) {
+      errors.etd = "Required";
+    }
     requireIfMissing("file_status");
     requireIfMissing("pi_no");
     if (row.etd && row.eta_ygn && row.eta_ygn < row.etd) {
@@ -633,7 +654,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
       "Type",
       "BL No",
       "Product",
-      "Sea Size",
+      "Cont Type",
       "Qty",
       "ETD",
       "ETA YGN",
@@ -672,7 +693,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
         <div>
           <span className="eyebrow">Data Entry</span>
           <h1>Shipment Table</h1>
-          <p className="subtitle">Excel/Google Form style input for CT, DAP, and Other data.</p>
+          <p className="subtitle">Excel/Google Form style input for shipment type data.</p>
         </div>
         <div className="data-entry-actions">
           <button type="button" className="upload-btn secondary-btn" onClick={onBack}>
@@ -786,16 +807,28 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
             <thead>
               <tr>
                 <th aria-label="Sort" />
-                <th>Type</th>
-                <th>BL No</th>
-                <th className="col-product">Product</th>
-                <th className="col-sea-size">Sea Size</th>
+                <th>
+                  Type <span className="required-mark">*</span>
+                </th>
+                <th>
+                  BL No <span className="required-mark">*</span>
+                </th>
+                <th className="col-product">
+                  Product <span className="required-mark">*</span>
+                </th>
+                <th className="col-sea-size">Cont Type</th>
                 <th className="col-qty">Qty</th>
-                <th>ETD</th>
+                <th>
+                  ETD <span className="required-mark">*</span>
+                </th>
                 <th>ETA YGN</th>
-                <th className="col-status">File Status</th>
+                <th className="col-status">
+                  File Status <span className="required-mark">*</span>
+                </th>
                 <th>Issue Date</th>
-                <th>PI No</th>
+                <th>
+                  PI No <span className="required-mark">*</span>
+                </th>
                 <th>Remark</th>
                 <th>Actions</th>
               </tr>
@@ -1069,6 +1102,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
                     </td>
                     <td>
                       <input type="date" value={row.etd} onChange={(e) => updateRow(index, "etd", e.target.value)} />
+                      {error.etd && <span className="cell-error">{error.etd}</span>}
                     </td>
                     <td>
                       <input

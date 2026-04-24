@@ -4,9 +4,29 @@ namespace App\Http\Controllers;
 
 use App\Models\DataEntry;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class DataEntryController extends Controller
 {
+    private const ENTRY_TYPES = [
+        'Steel',
+        'Roofing/Ceiling/Wall',
+        'Sanitary Ware',
+        'Garden And Accessories',
+        'Hardware And Tools',
+        'Surface Covering',
+        'Door, Windows And Wood',
+        'Electrical And Accessories',
+        'Home Appliance',
+        'Paint And Chemical',
+        'Houseware And Kitchen',
+        'Furniture And Bedding',
+        'Stationery & Digital Equipment',
+        'CT',
+        'DAP',
+        'Other',
+    ];
+
     public function index(Request $request)
     {
         $query = DataEntry::query()
@@ -44,12 +64,12 @@ class DataEntryController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'entry_type' => ['required', 'string', 'in:CT,DAP,Other'],
+            'entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
             'bl_no' => ['required', 'string', 'max:255'],
             'product_name' => ['required', 'string', 'max:255'],
             'sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:sea_shipment_qty'],
             'sea_shipment_qty' => ['nullable', 'integer', 'min:1', 'required_with:sea_shipment_size'],
-            'etd' => ['nullable', 'date'],
+            'etd' => ['required', 'date'],
             'eta_ygn' => ['nullable', 'date'],
             'file_status' => ['required', 'string', 'in:Arrive Port,Run,Finished'],
             'remark' => ['nullable', 'string'],
@@ -78,12 +98,12 @@ class DataEntryController extends Controller
     {
         $validated = $request->validate([
             'entries' => ['required', 'array', 'min:1'],
-            'entries.*.entry_type' => ['required', 'string', 'in:CT,DAP,Other'],
+            'entries.*.entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
             'entries.*.bl_no' => ['required', 'string', 'max:255'],
             'entries.*.product_name' => ['required', 'string', 'max:255'],
             'entries.*.sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:entries.*.sea_shipment_qty'],
             'entries.*.sea_shipment_qty' => ['nullable', 'integer', 'min:1', 'required_with:entries.*.sea_shipment_size'],
-            'entries.*.etd' => ['nullable', 'date'],
+            'entries.*.etd' => ['required', 'date'],
             'entries.*.eta_ygn' => ['nullable', 'date'],
             'entries.*.file_status' => ['required', 'string', 'in:Arrive Port,Run,Finished'],
             'entries.*.remark' => ['nullable', 'string'],
@@ -123,12 +143,12 @@ class DataEntryController extends Controller
     public function update(Request $request, DataEntry $dataEntry)
     {
         $validated = $request->validate([
-            'entry_type' => ['required', 'string', 'in:CT,DAP,Other'],
+            'entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
             'bl_no' => ['required', 'string', 'max:255'],
             'product_name' => ['required', 'string', 'max:255'],
             'sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:sea_shipment_qty'],
             'sea_shipment_qty' => ['nullable', 'integer', 'min:1', 'required_with:sea_shipment_size'],
-            'etd' => ['nullable', 'date'],
+            'etd' => ['required', 'date'],
             'eta_ygn' => ['nullable', 'date'],
             'file_status' => ['required', 'string', 'in:Arrive Port,Run,Finished'],
             'remark' => ['nullable', 'string'],

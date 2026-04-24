@@ -456,6 +456,11 @@ body {
   z-index: 1;
 }
 
+.required-mark {
+  color: #dc2626;
+  font-weight: 800;
+}
+
 .inline-entry-table input,
 .inline-entry-table select {
   width: 100%;
