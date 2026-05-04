@@ -20,10 +20,32 @@ const ENTRY_TYPES = [
   "DAP",
   "Other",
 ];
-const FILE_STATUSES = ["Arrive Port", "Run", "Finished"];
+const FILE_STATUSES = [
+  "Under Production",
+  "Production Finished",
+  "Arrive Port",
+  "File Run",
+  "File Finished",
+];
+const IMPORTER_NAMES = [
+  "The Creative Life Co.,Ltd",
+  "Shwe Zin Htet Distribution Co.,Ltd",
+  "Myint Myat Yadanar Mon Co.,Ltd",
+  "Lucky Pro Myanamr  Co.,Ltd",
+  "Myanmar Nature life Co.,Ltd",
+  "Great Asia Garuda Co.,Ltd",
+  "Mandalay Zone Co.,Ltd",
+  "Wakhema Trading Co.,Ltd",
+  "United Group Of Trading Co.,Ltd",
+  "Ayeyar Myitter Public Co.,Ltd",
+  "Soueast Motor Myanmar Co.,Ltd",
+  "Farmer Company Limited",
+  "Winning Sky Company Limited",
+];
 
 const emptyRow = {
   entry_type: "",
+  importer_name: "",
   bl_no: "",
   product_name: "",
   sea_shipment_size: "",
@@ -38,6 +60,7 @@ const emptyRow = {
 
 const normalizeRow = (row) => ({
   entry_type: row.entry_type,
+  importer_name: row.importer_name,
   bl_no: row.bl_no.trim(),
   product_name: row.product_name.trim(),
   sea_shipment_size: row.sea_shipment_size || null,
@@ -116,6 +139,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
       const normalized = list.reduce((acc, entry) => {
         acc[entry.id] = {
           entry_type: entry.entry_type || "",
+          importer_name: entry.importer_name || "",
           bl_no: entry.bl_no || "",
           product_name: entry.product_name || "",
           sea_shipment_size: entry.sea_shipment_size || "",
@@ -193,6 +217,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
 
   const isRowEmpty = (row) =>
     !row.entry_type &&
+    !row.importer_name &&
     !row.bl_no &&
     !row.product_name &&
     !row.sea_shipment_size &&
@@ -407,6 +432,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
       if (query) {
         const haystack = [
           row.entry_type,
+          row.importer_name,
           row.bl_no,
           row.product_name,
           row.file_status,
@@ -652,6 +678,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
     }
     const headers = [
       "Type",
+      "Importer Name",
       "BL No",
       "Product",
       "Cont Type",
@@ -667,6 +694,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
       const row = editingEntries[entry.id] || entry;
       return [
         row.entry_type || "",
+        row.importer_name || "",
         row.bl_no || "",
         row.product_name || "",
         row.sea_shipment_size || "",
@@ -811,6 +839,9 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
                   Type <span className="required-mark">*</span>
                 </th>
                 <th>
+                  Importer Name
+                </th>
+                <th>
                   BL No <span className="required-mark">*</span>
                 </th>
                 <th className="col-product">
@@ -836,7 +867,7 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
             <tbody>
               {filteredEntries.length === 0 && !entriesLoading ? (
                 <tr>
-                  <td colSpan="13" className="empty-cell">
+                  <td colSpan="14" className="empty-cell">
                     No saved entries.
                   </td>
                 </tr>
@@ -901,6 +932,19 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
                           {ENTRY_TYPES.map((type) => (
                             <option key={type} value={type}>
                               {type}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          value={row.importer_name || ""}
+                          onChange={(e) => updateEditingEntry(entry.id, "importer_name", e.target.value)}
+                        >
+                          <option value="">Choose</option>
+                          {IMPORTER_NAMES.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
                             </option>
                           ))}
                         </select>
@@ -1053,6 +1097,19 @@ function DataEntryView({ apiBaseUrl, authToken, onUnauthorized, onBack }) {
                         ))}
                       </select>
                       {error.entry_type && <span className="cell-error">{error.entry_type}</span>}
+                    </td>
+                    <td>
+                      <select
+                        value={row.importer_name}
+                        onChange={(e) => updateRow(index, "importer_name", e.target.value)}
+                      >
+                        <option value="">Choose</option>
+                        {IMPORTER_NAMES.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td>
                       <input
