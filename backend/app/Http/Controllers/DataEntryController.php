@@ -72,7 +72,7 @@ class DataEntryController extends Controller
     {
         $validated = $request->validate([
             'entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
-            'importer_name' => ['required', 'string', 'max:255'],
+            'importer_name' => ['nullable', 'string', 'max:255'],
             'bl_no' => ['required', 'string', 'max:255'],
             'product_name' => ['required', 'string', 'max:255'],
             'sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:sea_shipment_qty'],
@@ -107,7 +107,7 @@ class DataEntryController extends Controller
         $validated = $request->validate([
             'entries' => ['required', 'array', 'min:1'],
             'entries.*.entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
-            'entries.*.importer_name' => ['required', 'string', 'max:255'],
+            'entries.*.importer_name' => ['nullable', 'string', 'max:255'],
             'entries.*.bl_no' => ['required', 'string', 'max:255'],
             'entries.*.product_name' => ['required', 'string', 'max:255'],
             'entries.*.sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:entries.*.sea_shipment_qty'],
@@ -153,7 +153,7 @@ class DataEntryController extends Controller
     {
         $validated = $request->validate([
             'entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
-            'importer_name' => ['required', 'string', 'max:255'],
+            'importer_name' => ['nullable', 'string', 'max:255'],
             'bl_no' => ['required', 'string', 'max:255'],
             'product_name' => ['required', 'string', 'max:255'],
             'sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:sea_shipment_qty'],
