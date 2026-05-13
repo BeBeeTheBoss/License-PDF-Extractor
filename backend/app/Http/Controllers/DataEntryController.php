@@ -72,6 +72,7 @@ class DataEntryController extends Controller
     {
         $validated = $request->validate([
             'entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
+            'importer_name' => ['required', 'string', 'max:255'],
             'bl_no' => ['required', 'string', 'max:255'],
             'product_name' => ['required', 'string', 'max:255'],
             'sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:sea_shipment_qty'],
@@ -84,7 +85,7 @@ class DataEntryController extends Controller
             'pi_no' => ['required', 'string', 'max:255'],
         ]);
 
-        foreach (['entry_type', 'bl_no', 'product_name', 'file_status', 'remark', 'pi_no'] as $field) {
+        foreach (['entry_type', 'importer_name', 'bl_no', 'product_name', 'file_status', 'remark', 'pi_no'] as $field) {
             if (array_key_exists($field, $validated) && is_string($validated[$field])) {
                 $validated[$field] = trim($validated[$field]);
             }
@@ -106,6 +107,7 @@ class DataEntryController extends Controller
         $validated = $request->validate([
             'entries' => ['required', 'array', 'min:1'],
             'entries.*.entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
+            'entries.*.importer_name' => ['required', 'string', 'max:255'],
             'entries.*.bl_no' => ['required', 'string', 'max:255'],
             'entries.*.product_name' => ['required', 'string', 'max:255'],
             'entries.*.sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:entries.*.sea_shipment_qty'],
@@ -119,7 +121,7 @@ class DataEntryController extends Controller
         ]);
 
         $entries = collect($validated['entries'])->map(function ($entry) {
-            foreach (['entry_type', 'bl_no', 'product_name', 'file_status', 'remark', 'pi_no'] as $field) {
+            foreach (['entry_type', 'importer_name', 'bl_no', 'product_name', 'file_status', 'remark', 'pi_no'] as $field) {
                 if (array_key_exists($field, $entry) && is_string($entry[$field])) {
                     $entry[$field] = trim($entry[$field]);
                 }
@@ -151,6 +153,7 @@ class DataEntryController extends Controller
     {
         $validated = $request->validate([
             'entry_type' => ['required', 'string', Rule::in(self::ENTRY_TYPES)],
+            'importer_name' => ['required', 'string', 'max:255'],
             'bl_no' => ['required', 'string', 'max:255'],
             'product_name' => ['required', 'string', 'max:255'],
             'sea_shipment_size' => ['nullable', 'string', 'in:20,40', 'required_with:sea_shipment_qty'],
@@ -163,7 +166,7 @@ class DataEntryController extends Controller
             'pi_no' => ['required', 'string', 'max:255'],
         ]);
 
-        foreach (['entry_type', 'bl_no', 'product_name', 'file_status', 'remark', 'pi_no'] as $field) {
+        foreach (['entry_type', 'importer_name', 'bl_no', 'product_name', 'file_status', 'remark', 'pi_no'] as $field) {
             if (array_key_exists($field, $validated) && is_string($validated[$field])) {
                 $validated[$field] = trim($validated[$field]);
             }

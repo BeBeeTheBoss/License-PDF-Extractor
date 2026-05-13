@@ -8,6 +8,7 @@ class DataEntry extends Model
 {
     protected $fillable = [
         'entry_type',
+        'importer_name',
         'bl_no',
         'product_name',
         'sea_shipment_size',
