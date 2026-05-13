@@ -26,6 +26,13 @@ class DataEntryController extends Controller
         'DAP',
         'Other',
     ];
+    private const FILE_STATUSES = [
+        'Under Production',
+        'Production Finished',
+        'Arrive Port',
+        'File Run',
+        'File Finished',
+    ];
 
     public function index(Request $request)
     {
@@ -71,7 +78,7 @@ class DataEntryController extends Controller
             'sea_shipment_qty' => ['nullable', 'integer', 'min:1', 'required_with:sea_shipment_size'],
             'etd' => ['required', 'date'],
             'eta_ygn' => ['nullable', 'date'],
-            'file_status' => ['required', 'string', 'in:Arrive Port,Run,Finished'],
+            'file_status' => ['required', 'string', Rule::in(self::FILE_STATUSES)],
             'remark' => ['nullable', 'string'],
             'issue_date' => ['nullable', 'date'],
             'pi_no' => ['required', 'string', 'max:255'],
@@ -105,7 +112,7 @@ class DataEntryController extends Controller
             'entries.*.sea_shipment_qty' => ['nullable', 'integer', 'min:1', 'required_with:entries.*.sea_shipment_size'],
             'entries.*.etd' => ['required', 'date'],
             'entries.*.eta_ygn' => ['nullable', 'date'],
-            'entries.*.file_status' => ['required', 'string', 'in:Arrive Port,Run,Finished'],
+            'entries.*.file_status' => ['required', 'string', Rule::in(self::FILE_STATUSES)],
             'entries.*.remark' => ['nullable', 'string'],
             'entries.*.issue_date' => ['nullable', 'date'],
             'entries.*.pi_no' => ['required', 'string', 'max:255'],
@@ -150,7 +157,7 @@ class DataEntryController extends Controller
             'sea_shipment_qty' => ['nullable', 'integer', 'min:1', 'required_with:sea_shipment_size'],
             'etd' => ['required', 'date'],
             'eta_ygn' => ['nullable', 'date'],
-            'file_status' => ['required', 'string', 'in:Arrive Port,Run,Finished'],
+            'file_status' => ['required', 'string', Rule::in(self::FILE_STATUSES)],
             'remark' => ['nullable', 'string'],
             'issue_date' => ['nullable', 'date'],
             'pi_no' => ['required', 'string', 'max:255'],
