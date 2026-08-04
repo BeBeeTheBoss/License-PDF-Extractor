@@ -21,6 +21,9 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'visible',
+        'oil_spreadsheet_id',
+        'ygn_spreadsheet_id',
     ];
 
     /**
@@ -43,6 +46,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'visible' => 'boolean',
         ];
     }
 }

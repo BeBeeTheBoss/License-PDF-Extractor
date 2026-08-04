@@ -37,8 +37,9 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [authEmail, setAuthEmail] = useState("");
-  const [loginEmail, setLoginEmail] = useState("admin@gmail.com");
-  const [loginPassword, setLoginPassword] = useState("123456");
+  const [dataEntryVisible, setDataEntryVisible] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [operationMode, setOperationMode] = useState("insert");
@@ -84,12 +85,14 @@ function App() {
         }
         const payload = await response.json();
         setAuthEmail(payload?.email || "");
+        setDataEntryVisible(Boolean(payload?.visible));
         setIsAuthenticated(true);
       } catch (_err) {
         localStorage.removeItem(AUTH_TOKEN_KEY);
         setAuthToken("");
         setIsAuthenticated(false);
         setAuthEmail("");
+        setDataEntryVisible(false);
       } finally {
         setAuthChecking(false);
       }
@@ -523,6 +526,7 @@ function App() {
       localStorage.setItem(AUTH_TOKEN_KEY, payload.token);
       setAuthToken(payload.token);
       setAuthEmail(payload.email || loginEmail.trim());
+      setDataEntryVisible(Boolean(payload.visible));
       setIsAuthenticated(true);
       setLoginPassword("");
     } catch (error) {
@@ -550,6 +554,7 @@ function App() {
       setAuthToken("");
       setIsAuthenticated(false);
       setAuthEmail("");
+      setDataEntryVisible(false);
       resetUiState();
     }
   };
@@ -584,7 +589,7 @@ function App() {
                 className="auth-input"
                 type="email"
                 placeholder="Email"
-                // value={loginEmail}
+                value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
                 required
               />
@@ -592,7 +597,7 @@ function App() {
                 className="auth-input"
                 type="password"
                 placeholder="Password"
-                // value={loginPassword}
+                value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 required
               />
@@ -644,7 +649,7 @@ function App() {
             </section>
           </div>
         </div>
-        <div className="page-link-row">
+        {dataEntryVisible && <div className="page-link-row">
           <button type="button" className="nav-link-btn" onClick={() => navigate("/data-entry")}>
             <span className="btn-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24">
@@ -656,7 +661,7 @@ function App() {
             </span>
             Go to Shipment Table
           </button>
-        </div>
+        </div>}
       </>
     );
   };
@@ -710,7 +715,7 @@ function App() {
                   Logout
                 </button>
               </div>
-              {renderDataEntryPage()}
+              {dataEntryVisible ? renderDataEntryPage() : <Navigate to="/" replace />}
             </div>
           </main>
         }

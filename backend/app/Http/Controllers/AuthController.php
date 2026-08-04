@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
@@ -15,26 +17,25 @@ class AuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        $adminEmail = trim((string) env('ADMIN_EMAIL', 'admin@gmail.com'));
-        $adminPassword = (string) env('ADMIN_PASSWORD', '123456');
-
         $email = trim((string) $request->input('email'));
         $password = (string) $request->input('password');
+        $user = User::query()->where('email', $email)->first();
 
-        if (! hash_equals(Str::lower($adminEmail), Str::lower($email)) || ! hash_equals($adminPassword, $password)) {
+        if (! $user || ! Hash::check($password, $user->password)) {
             return response()->json(['message' => 'Invalid credentials.'], 401);
         }
 
         $token = Str::random(80);
         $ttlMinutes = max(5, (int) env('ADMIN_TOKEN_TTL_MINUTES', 720));
         Cache::put($this->tokenKey($token), [
-            'email' => $adminEmail,
+            'user_id' => $user->id,
         ], now()->addMinutes($ttlMinutes));
 
         return response()->json([
             'message' => 'Login successful.',
             'token' => $token,
-            'email' => $adminEmail,
+            'email' => $user->email,
+            'visible' => $user->visible,
             'expires_in_minutes' => $ttlMinutes,
         ]);
     }
@@ -51,8 +52,15 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 401);
         }
 
+        $user = User::find($payload['user_id'] ?? null);
+        if (! $user) {
+            Cache::forget($this->tokenKey($token));
+            return response()->json(['message' => 'Unauthorized.'], 401);
+        }
+
         return response()->json([
-            'email' => (string) ($payload['email'] ?? ''),
+            'email' => $user->email,
+            'visible' => $user->visible,
         ]);
     }
 
@@ -83,4 +91,3 @@ class AuthController extends Controller
         return 'admin_auth_token:'.$token;
     }
 }
-

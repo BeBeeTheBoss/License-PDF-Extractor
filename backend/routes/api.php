@@ -15,11 +15,13 @@ Route::middleware('admin.auth')->group(function () {
     Route::get('/exports/{filename}', [PdfController::class, 'downloadExport'])
         ->where('filename', '[A-Za-z0-9._-]+')
         ->name('exports.download');
-    Route::get('/data-entries', [DataEntryController::class, 'index']);
-    Route::get('/data-entries/product-names', [DataEntryController::class, 'productNames']);
-    Route::post('/data-entries', [DataEntryController::class, 'store']);
-    Route::post('/data-entries/bulk', [DataEntryController::class, 'bulkStore']);
-    Route::put('/data-entries/{dataEntry}', [DataEntryController::class, 'update']);
-    Route::delete('/data-entries/{dataEntry}', [DataEntryController::class, 'destroy']);
-    Route::post('/data-entries/reorder', [DataEntryController::class, 'reorder']);
+    Route::middleware('data-entry.visible')->group(function () {
+        Route::get('/data-entries', [DataEntryController::class, 'index']);
+        Route::get('/data-entries/product-names', [DataEntryController::class, 'productNames']);
+        Route::post('/data-entries', [DataEntryController::class, 'store']);
+        Route::post('/data-entries/bulk', [DataEntryController::class, 'bulkStore']);
+        Route::put('/data-entries/{dataEntry}', [DataEntryController::class, 'update']);
+        Route::delete('/data-entries/{dataEntry}', [DataEntryController::class, 'destroy']);
+        Route::post('/data-entries/reorder', [DataEntryController::class, 'reorder']);
+    });
 });

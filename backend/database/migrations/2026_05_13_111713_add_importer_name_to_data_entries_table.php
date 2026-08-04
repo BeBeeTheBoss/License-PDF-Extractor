@@ -8,15 +8,19 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('data_entries', function (Blueprint $table) {
-            $table->string('importer_name')->nullable()->after('entry_type');
-        });
+        if (! Schema::hasColumn('data_entries', 'importer_name')) {
+            Schema::table('data_entries', function (Blueprint $table) {
+                $table->string('importer_name')->nullable()->after('entry_type');
+            });
+        }
     }
 
     public function down(): void
     {
-        Schema::table('data_entries', function (Blueprint $table) {
-            $table->dropColumn('importer_name');
-        });
+        if (Schema::hasColumn('data_entries', 'importer_name')) {
+            Schema::table('data_entries', function (Blueprint $table) {
+                $table->dropColumn('importer_name');
+            });
+        }
     }
 };

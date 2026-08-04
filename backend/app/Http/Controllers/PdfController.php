@@ -22,6 +22,10 @@ class PdfController extends Controller
         $file = $request->file('pdf');
         $documentType = (string) $request->input('document_type');
         $operationMode = (string) $request->input('operation_mode', 'insert');
+        $admin = $request->attributes->get('admin_user');
+        $adminSpreadsheetId = $documentType === 'OIL'
+            ? trim((string) ($admin?->oil_spreadsheet_id ?? ''))
+            : trim((string) ($admin?->ygn_spreadsheet_id ?? ''));
 
         $path = $file->storeAs('pdfs', $file->getClientOriginalName());
 
@@ -44,7 +48,7 @@ class PdfController extends Controller
             $file->getClientOriginalName(),
             $path,
             $extractedText,
-            $request->input('spreadsheet_id'),
+            $adminSpreadsheetId !== '' ? $adminSpreadsheetId : $request->input('spreadsheet_id'),
             $operationMode
         );
 
@@ -105,10 +109,14 @@ class PdfController extends Controller
         ]);
 
         $documentType = (string) $request->input('document_type');
+        $admin = $request->attributes->get('admin_user');
+        $adminSpreadsheetId = $documentType === 'OIL'
+            ? trim((string) ($admin?->oil_spreadsheet_id ?? ''))
+            : trim((string) ($admin?->ygn_spreadsheet_id ?? ''));
         $typeSpecificSpreadsheetId = $documentType === 'OIL'
             ? trim((string) env('GOOGLE_SHEETS_SPREADSHEET_ID_OIL', ''))
             : trim((string) env('GOOGLE_SHEETS_SPREADSHEET_ID_YGN', ''));
-        $spreadsheetId = trim((string) ($request->input('spreadsheet_id')
+        $spreadsheetId = trim((string) (($adminSpreadsheetId !== '' ? $adminSpreadsheetId : $request->input('spreadsheet_id'))
             ?: ($typeSpecificSpreadsheetId !== '' ? $typeSpecificSpreadsheetId : config('services.google_sheets.spreadsheet_id'))));
         $sheetName = (string) config('services.google_sheets.sheet_name', 'Sheet1');
         $serviceAccountEmail = (string) config('services.google_sheets.service_account_email');

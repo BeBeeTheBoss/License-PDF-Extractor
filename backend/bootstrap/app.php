@@ -14,6 +14,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'admin.auth' => \App\Http\Middleware\AdminAuthMiddleware::class,
+            'data-entry.visible' => \App\Http\Middleware\DataEntryVisibleMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
